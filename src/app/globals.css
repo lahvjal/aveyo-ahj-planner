@@ -1,0 +1,101 @@
+@import "tailwindcss";
+@import "mapbox-gl/dist/mapbox-gl.css";
+@import "@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css";
+
+:root {
+  --background: #121212;
+  --foreground: #ffffff;
+  --primary: #0066ff;
+  --primary-hover: #0052cc;
+  --secondary: #ff6600;
+  --secondary-hover: #cc5200;
+  --class-a: #0066ff;
+  --class-b: #ff6600;
+  --class-c: #ff0000;
+  --unknown: #808080;
+  --card-bg: #1e1e1e;
+  --border: #333333;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.mapboxgl-map {
+  width: 100%;
+  height: 100%;
+}
+
+.mapboxgl-popup {
+  max-width: 300px;
+}
+
+.mapboxgl-popup-content {
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  border-radius: 6px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.mapboxgl-ctrl-geocoder {
+  width: 100% !important;
+  max-width: 100% !important;
+  background-color: var(--card-bg);
+  color: var(--foreground);
+}
+
+.mapboxgl-ctrl-geocoder input {
+  color: var(--foreground);
+}
+
+.search-input {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.filter-tag {
+  background-color: var(--primary);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.filter-tag button {
+  margin-left: 8px;
+  opacity: 0.7;
+}
+
+.filter-tag button:hover {
+  opacity: 1;
+}
+
+.class-a-marker {
+  background-color: var(--class-a);
+}
+
+.class-b-marker {
+  background-color: var(--secondary);
+}
+
+.class-c-marker {
+  background-color: var(--class-c);
+}
+
+.unknown-marker {
+  background-color: var(--unknown);
+}
