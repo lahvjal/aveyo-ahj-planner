@@ -49,6 +49,9 @@ next-env.d.ts
 /temp
 /backup
 
+# Documentation
+/docs
+
 # Generated output
 /dist
 /.swc/

@@ -95,10 +95,24 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
           }
           
           // Check if project should be masked based on status and user role
-          // Only show full details if status is "Active" or if the user is the assigned rep or admin
-          const isActive = item.status && item.status.toLowerCase() === 'active';
+          // Only show full details if:
+          // 1. Status is "Complete" OR
+          // 2. The user is the assigned rep OR
+          // 3. The user is an admin
+          const isComplete = item.status && 
+            (item.status.toLowerCase() === 'complete' || 
+             item.status.toLowerCase() === 'completed' ||
+             item.status.toLowerCase().includes('complete'));
+             
+          // Check if user is assigned to this project
           const isAssignedToCurrentUser = item.rep_id === userProfile?.rep_id;
-          const shouldMask = !isActive && !isAssignedToCurrentUser && !isAdmin;
+          
+          // Check if user has admin privileges
+          const hasAdminAccess = isAdmin;
+          
+          // Determine if project should be masked
+          // A project is unmasked ONLY if it's complete OR it belongs to the current user OR user is admin
+          const shouldMask = !(isComplete || isAssignedToCurrentUser || hasAdminAccess);
           
           return {
             id: item.project_id || '',

@@ -28,7 +28,10 @@ export default function HomePage() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   
   // State for prediction mode
-  const [predictionModeActive, setPredictionModeActive] = useState(false);
+  const [predictionModeActive, setPredictionModeActive] = useState(true); // Default to true
+  const [predictionResult, setPredictionResult] = useState(null);
+  const [predictionRadius, setPredictionRadius] = useState(5);
+  const [predictionPinLocation, setPredictionPinLocation] = useState<[number, number] | null>(null);
   
   // Use the projects hook to fetch and filter data
   const { 
@@ -79,6 +82,11 @@ export default function HomePage() {
       setSelectedProject(null);
     }
     setPredictionModeActive(!predictionModeActive);
+    
+    // Clear prediction results when turning off prediction mode
+    if (predictionModeActive) {
+      setPredictionResult(null);
+    }
   };
 
   // Handle sorting
@@ -130,6 +138,9 @@ export default function HomePage() {
               toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
               predictionModeActive={predictionModeActive}
               togglePredictionMode={togglePredictionMode}
+              predictionResult={predictionResult}
+              predictionRadius={predictionRadius}
+              setPredictionRadius={setPredictionRadius}
             />
           </div>
         </div>
@@ -157,6 +168,12 @@ export default function HomePage() {
                         if (project) handleSelectProject(project);
                       }}
                       predictionModeActive={predictionModeActive}
+                      predictionResult={predictionResult}
+                      setPredictionResult={setPredictionResult}
+                      predictionRadius={predictionRadius}
+                      setPredictionRadius={setPredictionRadius}
+                      predictionPinLocation={predictionPinLocation}
+                      setPredictionPinLocation={setPredictionPinLocation}
                     />
                   ) : (
                     <EmptyStateMessage />

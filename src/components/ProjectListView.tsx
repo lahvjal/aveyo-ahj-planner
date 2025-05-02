@@ -160,22 +160,11 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
     );
   };
 
-  const getFinancierClassification = (project: Project) => {
-    const classification = project.financier.classification || '';
-    
-    return (
-      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(classification)}`}>
-        {classification || 'Unknown'}
-      </span>
-    );
-  };
-
   // Table headers
   const tableHeaders = [
     { id: 'address', label: 'Address' },
-    { id: 'ahj.name', label: 'AHJ' },
     { id: 'utility.name', label: 'Utility' },
-    { id: 'financier.name', label: 'Financier' },
+    { id: 'ahj.name', label: 'AHJ' },
     { id: 'status', label: 'Status' },
     { id: 'actions', label: '', sortable: false }
   ];
@@ -185,7 +174,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
       <div className="rounded-md border border-[#333333] flex-1 h-full flex flex-col">
         {/* Table header */}
         <div className="bg-[#1e1e1e] sticky top-0 z-10">
-          <div className="grid grid-cols-6 divide-x divide-[#333333]">
+          <div className="grid grid-cols-5 divide-x divide-[#333333]">
             {tableHeaders.map((header) => (
               <div 
                 key={header.id}
@@ -212,7 +201,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
               {visibleItems.map((project) => (
                 <div 
                   key={project.id}
-                  className={`grid grid-cols-6 hover:bg-[#1e1e1e] ${selectedProject?.id === project.id ? 'bg-[#333333]' : ''} ${
+                  className={`grid grid-cols-5 hover:bg-[#1e1e1e] ${selectedProject?.id === project.id ? 'bg-[#333333]' : ''} ${
                     project.isMasked ? 'opacity-70' : ''
                   }`}
                   onClick={() => handleSelectProject(project)}
@@ -231,20 +220,14 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
                     <div className="flex items-center">
-                      <span className="mr-2 truncate">{project.ahj.name}</span>
-                      {getAHJClassification(project)}
-                    </div>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
-                    <div className="flex items-center">
                       <span className="mr-2 truncate">{project.utility.name}</span>
                       {getUtilityClassification(project)}
                     </div>
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
                     <div className="flex items-center">
-                      <span className="mr-2 truncate">{project.financier.name}</span>
-                      {getFinancierClassification(project)}
+                      <span className="mr-2 truncate">{project.ahj.name}</span>
+                      {getAHJClassification(project)}
                     </div>
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">

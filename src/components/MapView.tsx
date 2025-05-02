@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { AHJ, Project } from '@/utils/types';
+import { AHJ, Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
 import { getClassificationMapColor, getClassificationBadgeClass } from '@/utils/classificationColors';
 import { getMapboxToken } from '@/utils/mapbox';
@@ -14,11 +14,17 @@ interface MapViewProps {
   ahjs?: AHJ[];
   selectedAHJ?: AHJ | null;
   onSelectAHJ?: (ahj: AHJ) => void;
-  selectedUtility?: any; // Changed type to any
+  selectedUtility?: any;
   projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
   predictionModeActive?: boolean;
+  predictionResult?: any;
+  setPredictionResult?: React.Dispatch<React.SetStateAction<any>>;
+  predictionRadius?: number;
+  setPredictionRadius?: React.Dispatch<React.SetStateAction<number>>;
+  predictionPinLocation?: [number, number] | null;
+  setPredictionPinLocation?: React.Dispatch<React.SetStateAction<[number, number] | null>>;
 }
 
 const MapView: React.FC<MapViewProps> = ({
@@ -29,7 +35,13 @@ const MapView: React.FC<MapViewProps> = ({
   projects,
   selectedProject,
   onSelectProject,
-  predictionModeActive = false
+  predictionModeActive = true, // Default to true
+  predictionResult,
+  setPredictionResult,
+  predictionRadius,
+  setPredictionRadius,
+  predictionPinLocation,
+  setPredictionPinLocation
 }) => {
   const { userProfile } = useAuth();
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -40,8 +52,8 @@ const MapView: React.FC<MapViewProps> = ({
   const [lat, setLat] = useState(40.7608);
   const [zoom, setZoom] = useState(9);
   const [mapLoaded, setMapLoaded] = useState(false);
-  const [countiesLoaded, setCountiesLoaded] = useState(false);
   const [visibleProjects, setVisibleProjects] = useState<Project[]>([]);
+  const [projectMarkers, setProjectMarkers] = useState<mapboxgl.Marker[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
   const [scrollLeftPos, setScrollLeftPos] = useState(0);
@@ -52,24 +64,75 @@ const MapView: React.FC<MapViewProps> = ({
   const cardsToShow = 3; // Number of cards to show at once
   const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
   
-  // Prediction mode state
-  const [predictionPin, setPredictionPin] = useState<mapboxgl.Marker | null>(null);
-  const [predictionRadius, setPredictionRadius] = useState<number>(5); // miles
-  const [predictionResult, setPredictionResult] = useState<{
-    probability: number;
-    nearbyProjects: Project[];
-    ahj: { id: string; name: string; classification: string } | null;
-    utility: { id: string; name: string; classification: string } | null;
-    financier: { id: string; name: string; classification: string } | null;
-    qualifiedCount: number;
-    totalCount: number;
+  // Prediction mode state - use props if provided, otherwise use local state
+  const [localPredictionPinLocation, setLocalPredictionPinLocation] = useState<[number, number] | null>(null);
+  
+  // Use the prediction props if provided, otherwise use local state
+  const actualPredictionModeActive = predictionModeActive !== undefined ? predictionModeActive : true;
+  const actualPredictionRadius = predictionRadius !== undefined ? predictionRadius : 5;
+  const actualSetPredictionRadius = setPredictionRadius || ((value: number) => {});
+  const actualPredictionResult = predictionResult !== undefined ? predictionResult : null;
+  const actualSetPredictionResult = setPredictionResult || ((value: any) => {});
+  const actualPredictionPinLocation = predictionPinLocation !== undefined ? predictionPinLocation : localPredictionPinLocation;
+  const actualSetPredictionPinLocation = setPredictionPinLocation || setLocalPredictionPinLocation;
+  
+  // Helper function to create a GeoJSON circle
+  const createGeoJSONCircle = (center: [number, number], radiusInMeters: number, options: { steps?: number, units?: 'meters' } = {}) => {
+    const steps = options.steps || 64;
+    const units = options.units || 'meters';
+    
+    const coordinates = [];
+    const distanceX = radiusInMeters / (111320 * Math.cos(center[1] * Math.PI / 180));
+    const distanceY = radiusInMeters / 110540;
+
+    for (let i = 0; i < steps; i++) {
+      const angle = i * 2 * Math.PI / steps;
+      const x = center[0] + distanceX * Math.cos(angle);
+      const y = center[1] + distanceY * Math.sin(angle);
+      coordinates.push([x, y]);
+    }
+    
+    // Add the first point at the end to close the circle
+    coordinates.push(coordinates[0]);
+    
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [coordinates]
+      },
+      properties: {}
+    };
+  };
+
+  // Flag to track if map movements should be allowed
+  // This prevents automatic map movements when filters change or data updates
+  const [allowMapMovement, setAllowMapMovement] = useState<{
+    initial: boolean; // Allow initial map setup movement
+    selection: boolean; // Allow movement when selecting a project
+    utility: boolean; // Allow movement when selecting a utility
+  }>({
+    initial: true, // Allow initial setup
+    selection: true, // Allow project selection movement
+    utility: false // Don't move map for utility changes by default
+  });
+
+  // Store map state for view switching
+  const [savedMapState, setSavedMapState] = useState<{
+    center: [number, number];
+    zoom: number;
+    bearing: number;
+    pitch: number;
   } | null>(null);
-  const predictionRadiusRef = useRef<mapboxgl.GeoJSONSource | null>(null);
 
   // Memoize visible projects to prevent unnecessary re-renders
   const sortedVisibleProjects = useMemo(() => {
     return [...visibleProjects].sort((a, b) => {
-      // First, prioritize user's own projects
+      // First, prioritize unmasked projects over masked ones
+      if (!a.isMasked && b.isMasked) return -1;
+      if (a.isMasked && !b.isMasked) return 1;
+      
+      // Within each group (masked or unmasked), prioritize user's own projects
       const aIsUserProject = a.rep_id && userProfile?.rep_id && a.rep_id === userProfile.rep_id;
       const bIsUserProject = b.rep_id && userProfile?.rep_id && b.rep_id === userProfile.rep_id;
       
@@ -185,11 +248,16 @@ const MapView: React.FC<MapViewProps> = ({
               bounds.extend([project.longitude!, project.latitude!]);
             });
             
-            // Fit the map to the bounds with padding
-            map.fitBounds(bounds, {
-              padding: 100,
-              maxZoom: 12
-            });
+            // Fit the map to the bounds with padding - only during initial setup
+            if (allowMapMovement.initial) {
+              map.fitBounds(bounds, {
+                padding: 100,
+                maxZoom: 12
+              });
+              
+              // Disable initial movement after first use
+              setAllowMapMovement(prev => ({ ...prev, initial: false }));
+            }
           });
         }, 1000); // Short delay to ensure map is fully loaded
         
@@ -229,6 +297,134 @@ const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
+  // Store map state and prediction state when component unmounts (switching to list view)
+  useEffect(() => {
+    return () => {
+      if (mapRef.current) {
+        const center = mapRef.current.getCenter().toArray() as [number, number];
+        const zoom = mapRef.current.getZoom();
+        const bearing = mapRef.current.getBearing();
+        const pitch = mapRef.current.getPitch();
+        
+        // Save the map state to localStorage for persistence
+        const mapState = { center, zoom, bearing, pitch };
+        localStorage.setItem('mapViewState', JSON.stringify(mapState));
+        setSavedMapState(mapState);
+        
+        // Save prediction state
+        if (actualPredictionPinLocation) {
+          localStorage.setItem('predictionPinLocation', JSON.stringify(actualPredictionPinLocation));
+        }
+        
+        if (actualPredictionResult) {
+          localStorage.setItem('predictionResult', JSON.stringify(actualPredictionResult));
+        }
+        
+        localStorage.setItem('predictionRadius', actualPredictionRadius.toString());
+        localStorage.setItem('predictionModeActive', actualPredictionModeActive.toString());
+      }
+    };
+  }, [actualPredictionPinLocation, actualPredictionResult, actualPredictionRadius, actualPredictionModeActive]);
+
+  // Restore map state and prediction state when initializing map
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    try {
+      // Try to get saved state from localStorage
+      const savedState = localStorage.getItem('mapViewState');
+      
+      if (savedState) {
+        const { center, zoom, bearing, pitch } = JSON.parse(savedState);
+        
+        // Only restore if we have valid coordinates
+        if (center && center.length === 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+          console.log('[MapView] Restoring saved map state:', { center, zoom, bearing, pitch });
+          
+          // Use jumpTo to avoid animation
+          mapRef.current.jumpTo({
+            center,
+            zoom,
+            bearing,
+            pitch
+          });
+          
+          // Disable initial movement since we're restoring a saved state
+          setAllowMapMovement(prev => ({ ...prev, initial: false }));
+        }
+      }
+      
+      // Restore prediction state if in prediction mode
+      if (actualPredictionModeActive) {
+        // Restore prediction pin location
+        const savedPinLocation = localStorage.getItem('predictionPinLocation');
+        if (savedPinLocation && !actualPredictionPinLocation) {
+          const pinLocation = JSON.parse(savedPinLocation) as [number, number];
+          actualSetPredictionPinLocation(pinLocation);
+          
+          // Create prediction pin element
+          const pinElement = document.createElement('div');
+          pinElement.id = 'prediction-pin';
+          pinElement.className = 'prediction-pin';
+          pinElement.style.width = '30px';
+          pinElement.style.height = '30px';
+          pinElement.style.backgroundImage = 'url(/pin_prediction.svg)';
+          pinElement.style.backgroundSize = 'contain';
+          pinElement.style.backgroundRepeat = 'no-repeat';
+          
+          // Add prediction pin
+          new mapboxgl.Marker(pinElement)
+            .setLngLat(pinLocation)
+            .addTo(mapRef.current);
+          
+          // Restore prediction radius circle
+          const radiusInMeters = actualPredictionRadius * 1609.34; // Convert miles to meters
+          const radiusOptions = {
+            steps: 64,
+            units: 'meters' as const
+          };
+          
+          const circleGeoJSON = createGeoJSONCircle(pinLocation, radiusInMeters, radiusOptions);
+          
+          // Add the radius source and layers
+          mapRef.current.addSource('prediction-radius', {
+            type: 'geojson',
+            data: circleGeoJSON as any
+          });
+          
+          mapRef.current.addLayer({
+            id: 'prediction-radius-fill',
+            type: 'fill',
+            source: 'prediction-radius',
+            paint: {
+              'fill-color': '#4285F4',
+              'fill-opacity': 0.2
+            }
+          });
+          
+          mapRef.current.addLayer({
+            id: 'prediction-radius-outline',
+            type: 'line',
+            source: 'prediction-radius',
+            paint: {
+              'line-color': '#4285F4',
+              'line-width': 2,
+              'line-opacity': 0.7
+            }
+          });
+          
+          // Restore prediction result
+          const savedPredictionResult = localStorage.getItem('predictionResult');
+          if (savedPredictionResult && !actualPredictionResult) {
+            actualSetPredictionResult(JSON.parse(savedPredictionResult));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[MapView] Error restoring map state:', error);
+    }
+  }, [mapLoaded, actualPredictionModeActive, actualPredictionPinLocation, actualPredictionResult]);
+
   // Calculate distance between two points using Haversine formula
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
     const R = 6371; // Radius of the earth in km
@@ -246,51 +442,6 @@ const MapView: React.FC<MapViewProps> = ({
   const deg2rad = (deg: number): number => {
     return deg * (Math.PI/180);
   };
-
-  // Add county boundaries source
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    if (!currentMap || !mapLoaded) return;
-
-    // Add county boundaries source
-    currentMap.addSource('counties', {
-      type: 'vector',
-      url: 'https://tiles.arcgis.com/tiles/nGt4QxSblgDfeJF9/arcgis/rest/services/USA_Counties_2019/MapServer',
-      minzoom: 4,
-      maxzoom: 12
-    });
-
-    // Add county boundaries layers
-    currentMap.addLayer({
-      id: 'county-boundary-fill',
-      type: 'fill',
-      source: 'counties',
-      'source-layer': 'USA_Counties_2019',
-      paint: {
-        'fill-color': '#000000',  // Black
-        'fill-opacity': 0.1
-      },
-      layout: {
-        visibility: 'visible'
-      }
-    });
-    currentMap.addLayer({
-      id: 'county-boundary-line',
-      type: 'line',
-      source: 'counties',
-      'source-layer': 'USA_Counties_2019',
-      paint: {
-        'line-color': '#000000',  // Black
-        'line-width': 1,
-        'line-opacity': 0.5
-      },
-      layout: {
-        visibility: 'visible'
-      }
-    });
-
-    setCountiesLoaded(true);
-  }, [mapLoaded]);
 
   // Update visible projects based on map bounds
   const updateVisibleProjects = (currentMap: mapboxgl.Map) => {
@@ -467,10 +618,20 @@ const MapView: React.FC<MapViewProps> = ({
 
   // Handle project click
   const handleProjectClick = (project: Project) => {
+    // If the project is already selected, do nothing
+    if (localSelectedProject && localSelectedProject.id === project.id) {
+      return;
+    }
+    
     setLocalSelectedProject(project);
     
-    // Fly to the project location
-    if (mapRef.current && project.latitude && project.longitude) {
+    // Call the parent component's onSelectProject callback
+    if (onSelectProject) {
+      onSelectProject(project);
+    }
+    
+    // Fly to the project location - only if user initiated the selection
+    if (mapRef.current && project.latitude && project.longitude && allowMapMovement.selection) {
       mapRef.current.flyTo({
         center: [project.longitude, project.latitude],
         zoom: 14,
@@ -481,315 +642,22 @@ const MapView: React.FC<MapViewProps> = ({
 
   // Update local state when prop changes
   useEffect(() => {
-    setLocalSelectedProject(selectedProject);
+    // Only update if the selectedProject prop changes directly
+    // This prevents re-focusing when filters are applied or pins are dropped
+    if (selectedProject !== localSelectedProject) {
+      setLocalSelectedProject(selectedProject);
+      
+      // Fly to the project location if a new project is selected - only if user initiated
+      if (selectedProject && selectedProject.latitude && selectedProject.longitude && 
+          mapRef.current && allowMapMovement.selection) {
+        mapRef.current.flyTo({
+          center: [selectedProject.longitude, selectedProject.latitude],
+          zoom: 14,
+          essential: true
+        });
+      }
+    }
   }, [selectedProject]);
-
-  // Handle closing the selected project
-  const handleCloseProject = () => {
-    setLocalSelectedProject(null);
-    if (onSelectProject) {
-      onSelectProject(null);
-    }
-  };
-
-  // Get color for classification
-  const getClassificationColor = (classification: string | undefined, type: 'ahj' | 'utility' | 'financier') => {
-    return getClassificationMapColor(classification);
-  };
-
-  // Show county and city boundaries when an AHJ is selected
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    if (!currentMap || !mapLoaded || !countiesLoaded) return;
-
-    try {
-      // First, preserve the "show all cities" behavior for testing
-      // but we'll still apply specific filters when an AHJ is selected
-      if (!selectedAHJ) {
-        // Keep showing all cities but hide counties when no AHJ is selected
-        currentMap.setLayoutProperty('county-boundary-fill', 'visibility', 'none');
-        currentMap.setLayoutProperty('county-boundary-line', 'visibility', 'none');
-        return;
-      }
-
-      // Clear any existing county boundaries
-      currentMap.setLayoutProperty('county-boundary-fill', 'visibility', 'none');
-      currentMap.setLayoutProperty('county-boundary-line', 'visibility', 'none');
-
-      if (!selectedAHJ.county) return;
-
-      // Get county name without "County" suffix if present
-      const countyName = selectedAHJ.county.replace(/ County$/, '');
-
-      // Determine state from name or county
-      let state = '';
-      // Check if county contains state info
-      const stateMatch = selectedAHJ.county.match(/\b([A-Z]{2})\b/);
-      if (stateMatch) {
-        state = stateMatch[1];
-      }
-
-      // Convert state to FIPS code (first 2 digits of county FIPS)
-      const stateToFips: { [key: string]: string } = {
-        'AL': '01', 'AK': '02', 'AZ': '04', 'AR': '05', 'CA': '06', 'CO': '08', 'CT': '09',
-        'DE': '10', 'FL': '12', 'GA': '13', 'HI': '15', 'ID': '16', 'IL': '17', 'IN': '18',
-        'IA': '19', 'KS': '20', 'KY': '21', 'LA': '22', 'ME': '23', 'MD': '24', 'MA': '25',
-        'MI': '26', 'MN': '27', 'MS': '28', 'MO': '29', 'MT': '30', 'NE': '31', 'NV': '32',
-        'NH': '33', 'NJ': '34', 'NM': '35', 'NY': '36', 'NC': '37', 'ND': '38', 'OH': '39',
-        'OK': '40', 'OR': '41', 'PA': '42', 'RI': '44', 'SC': '45', 'SD': '46', 'TN': '47',
-        'TX': '48', 'UT': '49', 'VT': '50', 'VA': '51', 'WA': '53', 'WV': '54', 'WI': '55', 'WY': '56'
-      };
-
-      // Create filter for the county
-      let filter: any[] = ['==', 'NAME', countyName];
-
-      // If we have a state, add it to the filter
-      if (state && stateToFips[state]) {
-        // The FIPS code in the GeoJSON starts with the state FIPS
-        filter = ['all', filter, ['in', 'STATE', stateToFips[state]]];
-      }
-
-      // Apply filter to county layers
-      currentMap.setFilter('county-boundary-fill', filter);
-      currentMap.setFilter('county-boundary-line', filter);
-
-      // Show the county layers
-      currentMap.setLayoutProperty('county-boundary-fill', 'visibility', 'visible');
-      currentMap.setLayoutProperty('county-boundary-line', 'visibility', 'visible');
-
-      // Extract city name from AHJ name
-      if (selectedAHJ.name) {
-        // Extract city name from AHJ name (assuming format "City Name, State")
-        const cityMatch = selectedAHJ.name.match(/^([^,]+)/);
-        if (cityMatch) {
-          const cityName = cityMatch[1].trim();
-          // Extract state from county if available (format: "County, ST")
-          const stateFromCounty = selectedAHJ.county?.split(',')[1]?.trim() || state;
-
-          console.log(`Looking for city boundary: "${cityName}" in state "${stateFromCounty}"`);
-
-          try {
-            // Enable debug mode to see all city boundaries
-            // currentMap.setLayoutProperty('all-cities-debug', 'visibility', 'visible');
-
-            // Create filter for the city - case insensitive not possible with Mapbox filters
-            // So we'll try multiple case variations
-            const cityNameVariations = [
-              cityName,
-              cityName.toLowerCase(),
-              cityName.toUpperCase(),
-              cityName.charAt(0).toUpperCase() + cityName.slice(1).toLowerCase(), // Title case
-              // Add common city name variations
-              cityName.replace(/Saint /i, 'St. '),
-              cityName.replace(/Saint /i, 'St '),
-              cityName.replace(/Mount /i, 'Mt. '),
-              cityName.replace(/Mount /i, 'Mt ')
-            ];
-
-            // Create a filter that matches any of these name variations
-            let cityFilter: any[] = ['any'];
-            cityNameVariations.forEach(name => {
-              cityFilter.push(['==', 'NAME', name]);
-            });
-
-            // If we have a state, add it to the filter
-            if (stateFromCounty) {
-              cityFilter = ['all', cityFilter, ['==', 'STATE', stateFromCounty]];
-            }
-
-            console.log('Applying city filter:', JSON.stringify(cityFilter));
-
-            // Instead of replacing the filter (which would hide all other cities),
-            // we'll create a new layer specifically for the selected city
-            
-            // First, ensure our highlight layers exist
-            if (!currentMap.getLayer('selected-city-fill')) {
-              currentMap.addLayer({
-                id: 'selected-city-fill',
-                type: 'fill',
-                source: 'cities',
-                paint: {
-                  'fill-color': '#FFFFFF',  // White for selected city
-                  'fill-opacity': 0.5
-                },
-                layout: {
-                  visibility: 'visible'
-                },
-                filter: ['==', 'NAME', ''] // Empty filter initially
-              });
-            }
-            
-            if (!currentMap.getLayer('selected-city-line')) {
-              currentMap.addLayer({
-                id: 'selected-city-line',
-                type: 'line',
-                source: 'cities',
-                paint: {
-                  'line-color': '#FFFFFF',  // White for selected city
-                  'line-width': 4,
-                  'line-opacity': 1
-                },
-                layout: {
-                  visibility: 'visible'
-                },
-                filter: ['==', 'NAME', ''] // Empty filter initially
-              });
-            }
-            
-            // Apply the filter to our highlight layers
-            currentMap.setFilter('selected-city-fill', cityFilter);
-            currentMap.setFilter('selected-city-line', cityFilter);
-            
-            // Make sure they're visible
-            currentMap.setLayoutProperty('selected-city-fill', 'visibility', 'visible');
-            currentMap.setLayoutProperty('selected-city-line', 'visibility', 'visible');
-
-            // Try to get the bounds of the city to zoom to it
-            const cityFeatures = currentMap.querySourceFeatures('cities', {
-              filter: cityFilter
-            });
-
-            if (cityFeatures.length > 0) {
-              console.log(`Found ${cityFeatures.length} matching city features`);
-
-              // Create a bounds object to encompass all features
-              const bounds = new mapboxgl.LngLatBounds();
-
-              // Add each feature's coordinates to the bounds
-              cityFeatures.forEach(feature => {
-                if (feature.geometry.type === 'Polygon') {
-                  (feature.geometry.coordinates[0] as any[]).forEach(coord => {
-                    bounds.extend(coord as [number, number]);
-                  });
-                }
-              });
-
-              // If we have valid bounds, zoom to them
-              if (!bounds.isEmpty()) {
-                currentMap.fitBounds(bounds, { padding: 50 });
-              }
-            } else {
-              console.log('No matching city features found');
-            }
-          } catch (error) {
-            console.error('Error applying city boundary filter:', error);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error showing boundaries:', error);
-    }
-  }, [selectedAHJ, mapLoaded, countiesLoaded]);
-
-  // --- Utility Overlay Effect ---
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    console.log('[MapView] selectedUtility:', selectedUtility, 'mapLoaded:', mapLoaded);
-    if (!currentMap || !mapLoaded) return;
-
-    // Clean up previous utility layers and marker
-    if (currentMap.getLayer('utility-boundary-fill')) {
-      currentMap.removeLayer('utility-boundary-fill');
-      console.log('[MapView] Removed previous utility-boundary-fill layer');
-    }
-    if (currentMap.getLayer('utility-boundary-line')) {
-      currentMap.removeLayer('utility-boundary-line');
-      console.log('[MapView] Removed previous utility-boundary-line layer');
-    }
-    if (currentMap.getSource('utility-boundary')) {
-      currentMap.removeSource('utility-boundary');
-      console.log('[MapView] Removed previous utility-boundary source');
-    }
-    const prevMarker = document.getElementById('utility-marker');
-    if (prevMarker) {
-      prevMarker.remove();
-      console.log('[MapView] Removed previous utility marker');
-    }
-
-    if (!selectedUtility) {
-      console.log('[MapView] No selectedUtility, skipping overlay');
-      return;
-    }
-
-    // Fetch and add the utility GeoJSON
-    fetch(selectedUtility.geojson)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch utility geojson: ' + selectedUtility.geojson);
-        return res.json();
-      })
-      .then(geojson => {
-        console.log('[MapView] Loaded geojson for utility:', geojson);
-        currentMap.addSource('utility-boundary', {
-          type: 'geojson',
-          data: geojson
-        });
-        currentMap.addLayer({
-          id: 'utility-boundary-fill',
-          type: 'fill',
-          source: 'utility-boundary',
-          paint: {
-            'fill-color': '#000000',  // Black
-            'fill-opacity': 0.3
-          }
-        });
-        currentMap.addLayer({
-          id: 'utility-boundary-line',
-          type: 'line',
-          source: 'utility-boundary',
-          paint: {
-            'line-color': '#000000',  // Black
-            'line-width': 3,
-            'line-opacity': 0.8
-          }
-        });
-        // Zoom to utility boundary
-        const bounds = new mapboxgl.LngLatBounds();
-        geojson.features.forEach((feature: any) => {
-          if (feature.geometry.type === 'Polygon') {
-            feature.geometry.coordinates[0].forEach((coord: [number, number]) => {
-              bounds.extend(coord as [number, number]);
-            });
-          }
-        });
-        if (!bounds.isEmpty()) {
-          console.log('[MapView] Fitting map to utility bounds:', bounds);
-          currentMap.fitBounds(bounds, { padding: 50 });
-        }
-      })
-      .catch(err => {
-        console.error('[MapView] Error loading utility geojson:', err);
-      });
-
-    // Add utility marker
-    const markerEl = document.createElement('div');
-    markerEl.id = 'utility-marker';
-    markerEl.style.width = '28px';
-    markerEl.style.height = '28px';
-    markerEl.style.backgroundColor = '#FFFFFF';  // White
-    markerEl.style.border = '3px solid #000000';  // Black
-    markerEl.style.borderRadius = '50%';
-    markerEl.style.boxShadow = '0 0 10px 2px #000000';  // Black
-    markerEl.title = selectedUtility.name;
-    markerEl.style.display = 'flex';
-    markerEl.style.alignItems = 'center';
-    markerEl.style.justifyContent = 'center';
-    markerEl.style.zIndex = '10';
-    markerEl.innerHTML = '<svg width="14" height="14" fill="#000000" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg>';
-    new mapboxgl.Marker(markerEl)
-      .setLngLat([selectedUtility.location.lon, selectedUtility.location.lat])
-      .addTo(currentMap);
-    console.log('[MapView] Added utility marker at', selectedUtility.location.lon, selectedUtility.location.lat);
-
-    // Optionally fly to marker if no boundary
-    if (!selectedUtility.geojson) {
-      currentMap.flyTo({
-        center: [selectedUtility.location.lon, selectedUtility.location.lat],
-        zoom: 12,
-        essential: true
-      });
-      console.log('[MapView] Fly to utility marker');
-    }
-  }, [selectedUtility, mapLoaded]);
 
   // Add project markers to the map - optimized version
   useEffect(() => {
@@ -950,8 +818,11 @@ const MapView: React.FC<MapViewProps> = ({
     // Start creating markers in batches
     createMarkerBatch();
     
-    // If a project is selected, fly to it
+    // If a project is selected, fly to it - but only if prediction mode is not active
+    // and only if user initiated the selection
     if (localSelectedProject && 
+        !actualPredictionModeActive &&
+        allowMapMovement.selection &&
         typeof localSelectedProject.latitude === 'number' && !isNaN(localSelectedProject.latitude) &&
         typeof localSelectedProject.longitude === 'number' && !isNaN(localSelectedProject.longitude)) {
       try {
@@ -964,45 +835,49 @@ const MapView: React.FC<MapViewProps> = ({
         console.error('[MapView] Error flying to selected project:', error);
       }
     }
-  }, [projects, localSelectedProject, mapLoaded, onSelectProject, userProfile]);
+  }, [projects, localSelectedProject, mapLoaded, onSelectProject, userProfile, actualPredictionModeActive]);
 
   // Effect to handle prediction mode changes
   useEffect(() => {
-    if (!mapRef.current || !mapLoaded) return;
-    
-    const map = mapRef.current;
+    const currentMap = mapRef.current;
+    if (!currentMap || !mapLoaded) return;
     
     // Clean up prediction elements when prediction mode is disabled
-    if (!predictionModeActive) {
-      if (predictionPin) {
-        predictionPin.remove();
-        setPredictionPin(null);
+    if (!actualPredictionModeActive) {
+      if (actualPredictionPinLocation) {
+        // Remove existing prediction pin if any
+        const existingPin = document.getElementById('prediction-pin');
+        if (existingPin) {
+          existingPin.remove();
+        }
       }
       
-      if (map.getSource('prediction-radius')) {
-        map.removeLayer('prediction-radius-fill');
-        map.removeLayer('prediction-radius-outline');
-        map.removeSource('prediction-radius');
+      if (currentMap.getSource('prediction-radius')) {
+        currentMap.removeLayer('prediction-radius-fill');
+        currentMap.removeLayer('prediction-radius-outline');
+        currentMap.removeSource('prediction-radius');
       }
       
-      setPredictionResult(null);
+      actualSetPredictionResult(null);
       return;
     }
     
     // Add click handler for prediction mode
     const handleMapClick = (e: mapboxgl.MapMouseEvent) => {
-      if (!predictionModeActive || !map) return;
+      if (!actualPredictionModeActive || !currentMap) return;
       
       // Get clicked coordinates
       const { lng: clickedLng, lat: clickedLat } = e.lngLat;
       
       // Remove existing prediction pin if any
-      if (predictionPin) {
-        predictionPin.remove();
+      const existingPin = document.getElementById('prediction-pin');
+      if (existingPin) {
+        existingPin.remove();
       }
       
       // Create prediction pin element
       const pinElement = document.createElement('div');
+      pinElement.id = 'prediction-pin';
       pinElement.className = 'prediction-pin';
       pinElement.style.width = '30px';
       pinElement.style.height = '30px';
@@ -1011,83 +886,53 @@ const MapView: React.FC<MapViewProps> = ({
       pinElement.style.backgroundRepeat = 'no-repeat';
       
       // Add new prediction pin
-      const newPin = new mapboxgl.Marker(pinElement)
+      new mapboxgl.Marker(pinElement)
         .setLngLat([clickedLng, clickedLat])
-        .addTo(map);
+        .addTo(currentMap);
       
-      setPredictionPin(newPin);
+      // Save pin location to state
+      const newPinLocation: [number, number] = [clickedLng, clickedLat];
+      actualSetPredictionPinLocation(newPinLocation);
       
       // Create or update radius circle
-      const radiusInMeters = predictionRadius * 1609.34; // Convert miles to meters
+      const radiusInMeters = actualPredictionRadius * 1609.34; // Convert miles to meters
       const radiusOptions = {
         steps: 64,
         units: 'meters' as const
       };
       
-      // Create a GeoJSON circle
-      const createGeoJSONCircle = (center: [number, number], radiusInMeters: number) => {
-        const points = 64;
-        const coords = {
-          type: 'Feature' as const,
-          geometry: {
-            type: 'Polygon' as const,
-            coordinates: [[]] as number[][][]
-          },
-          properties: {}
-        };
-        
-        const degreePerPoint = 360 / points;
-        
-        for (let i = 0; i < points; i++) {
-          const degree = degreePerPoint * i;
-          const radian = degree * Math.PI / 180;
-          const x = center[0] + (radiusInMeters / 111320 * Math.cos(radian));
-          const y = center[1] + (radiusInMeters / 111320 * Math.sin(radian) / Math.cos(center[1] * Math.PI / 180));
-          coords.geometry.coordinates[0].push([x, y]);
-        }
-        
-        // Close the polygon
-        coords.geometry.coordinates[0].push(coords.geometry.coordinates[0][0]);
-        
-        return coords;
-      };
-      
-      const circleGeoJSON = createGeoJSONCircle([clickedLng, clickedLat], radiusInMeters);
+      const circleGeoJSON = createGeoJSONCircle([clickedLng, clickedLat], radiusInMeters, radiusOptions);
       
       // Add or update the radius source and layers
-      if (map.getSource('prediction-radius')) {
-        const source = map.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
+      if (currentMap.getSource('prediction-radius')) {
+        const source = currentMap.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
         source.setData(circleGeoJSON as any);
-        predictionRadiusRef.current = source;
       } else {
-        map.addSource('prediction-radius', {
+        currentMap.addSource('prediction-radius', {
           type: 'geojson',
           data: circleGeoJSON as any
         });
         
-        map.addLayer({
+        currentMap.addLayer({
           id: 'prediction-radius-fill',
           type: 'fill',
           source: 'prediction-radius',
-          layout: {},
           paint: {
-            'fill-color': '#5B8FF9',
-            'fill-opacity': 0.15
+            'fill-color': '#4285F4',
+            'fill-opacity': 0.2
           }
         });
         
-        map.addLayer({
+        currentMap.addLayer({
           id: 'prediction-radius-outline',
           type: 'line',
           source: 'prediction-radius',
-          layout: {},
           paint: {
-            'line-color': '#5B8FF9',
-            'line-width': 2
+            'line-color': '#4285F4',
+            'line-width': 2,
+            'line-opacity': 0.7
           }
         });
-        
-        predictionRadiusRef.current = map.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
       }
       
       // Calculate prediction
@@ -1095,18 +940,18 @@ const MapView: React.FC<MapViewProps> = ({
     };
     
     // Add click handler
-    map.on('click', handleMapClick);
+    currentMap.on('click', handleMapClick);
     
     // Cleanup function
     return () => {
-      map.off('click', handleMapClick);
+      currentMap.off('click', handleMapClick);
     };
-  }, [predictionModeActive, mapLoaded, predictionPin, predictionRadius, projects]);
-  
+  }, [actualPredictionModeActive, mapLoaded, actualPredictionPinLocation, actualPredictionRadius, projects]);
+
   // Function to calculate prediction
   const calculatePrediction = useCallback((lat: number, lng: number) => {
     if (!projects || projects.length === 0) {
-      setPredictionResult({
+      actualSetPredictionResult({
         probability: 0,
         nearbyProjects: [],
         ahj: null,
@@ -1119,10 +964,10 @@ const MapView: React.FC<MapViewProps> = ({
     }
     
     // Find nearby projects within radius
-    const nearbyProjects = findProjectsInRadius(lat, lng, predictionRadius, projects);
+    const nearbyProjects = findProjectsInRadius(lat, lng, actualPredictionRadius, projects);
     
     if (nearbyProjects.length === 0) {
-      setPredictionResult({
+      actualSetPredictionResult({
         probability: 0,
         nearbyProjects: [],
         ahj: null,
@@ -1137,6 +982,29 @@ const MapView: React.FC<MapViewProps> = ({
     // Determine likely AHJ, utility, and financier based on nearby projects
     const servicingEntities = determineServicingEntitiesByMajority(nearbyProjects);
     
+    // Calculate distances for each project
+    const projectsWithDistance = nearbyProjects.map(project => {
+      const distance = calculateHaversineDistance(
+        lat, lng, 
+        project.latitude || 0, project.longitude || 0
+      );
+      return { 
+        project, 
+        distance,
+        isQualified: isQualified(project.qualifies45Day)
+      };
+    });
+    
+    // Sort by distance
+    projectsWithDistance.sort((a, b) => a.distance - b.distance);
+    
+    // Log for debugging
+    console.log("Projects with distance:", JSON.stringify(projectsWithDistance.map(p => ({
+      address: p.project.address,
+      distance: p.distance.toFixed(2) + " km",
+      isQualified: p.isQualified
+    })), null, 2));
+    
     // Count qualified projects
     const qualifiedProjects = nearbyProjects.filter(project => 
       isQualified(project.qualifies45Day)
@@ -1145,9 +1013,65 @@ const MapView: React.FC<MapViewProps> = ({
     // Calculate probability based on:
     // 1. Percentage of nearby qualified projects
     // 2. Classifications of AHJ, utility, and financier
+    // 3. Distance-weighted qualification rate (closer projects have more influence)
     
     // Base probability from nearby project qualification rate
-    let probability = (qualifiedProjects.length / nearbyProjects.length) * 100;
+    const baseProbability = (qualifiedProjects.length / nearbyProjects.length) * 100;
+    console.log("Base probability:", baseProbability.toFixed(2) + "%");
+    
+    let probability = baseProbability;
+    
+    // Apply distance weighting to the probability calculation
+    if (projectsWithDistance.length > 0) {
+      // Maximum radius in km
+      const maxRadius = actualPredictionRadius * 1.60934;
+      
+      // Calculate distance-weighted qualification rate
+      let weightedQualifiedSum = 0;
+      let weightSum = 0;
+      
+      // Log individual project weights
+      const projectWeights: Array<{
+        address: string;
+        distance: string;
+        weight: string;
+        isQualified: boolean;
+      }> = [];
+      
+      projectsWithDistance.forEach(({ project, distance, isQualified }) => {
+        // Weight is inversely proportional to distance (closer = higher weight)
+        // Projects at the edge of the radius have 10% of the weight of those at the center
+        // Use a more aggressive curve to emphasize nearby projects
+        const weight = Math.pow(1 - (distance / maxRadius), 2);
+        
+        // Add to weighted sums
+        if (isQualified) {
+          weightedQualifiedSum += weight;
+        }
+        weightSum += weight;
+        
+        // Log for debugging
+        projectWeights.push({
+          address: project.address,
+          distance: distance.toFixed(2) + " km",
+          weight: weight.toFixed(3),
+          isQualified
+        });
+      });
+      
+      console.log("Project weights:", JSON.stringify(projectWeights, null, 2));
+      
+      // Calculate weighted probability if we have valid weights
+      if (weightSum > 0) {
+        const weightedProbability = (weightedQualifiedSum / weightSum) * 100;
+        console.log("Weighted probability:", weightedProbability.toFixed(2) + "%");
+        
+        // Blend the original probability with the weighted probability
+        // Give the weighted probability more influence (80%)
+        probability = baseProbability * 0.2 + weightedProbability * 0.8;
+        console.log("Blended probability:", probability.toFixed(2) + "%");
+      }
+    }
     
     // Adjust probability based on entity classifications
     const classificationBonus = {
@@ -1156,24 +1080,36 @@ const MapView: React.FC<MapViewProps> = ({
       'C': -20 // C classification subtracts 20% from probability
     };
     
+    let classificationAdjustment = 0;
+    
     // Apply classification adjustments if entities are found
     if (servicingEntities.ahj && servicingEntities.ahj.classification) {
-      probability += classificationBonus[servicingEntities.ahj.classification as 'A' | 'B' | 'C'] || 0;
+      const adjustment = classificationBonus[servicingEntities.ahj.classification as 'A' | 'B' | 'C'] || 0;
+      classificationAdjustment += adjustment;
+      console.log(`AHJ ${servicingEntities.ahj.classification} adjustment: ${adjustment}%`);
     }
     
     if (servicingEntities.utility && servicingEntities.utility.classification) {
-      probability += classificationBonus[servicingEntities.utility.classification as 'A' | 'B' | 'C'] || 0;
+      const adjustment = classificationBonus[servicingEntities.utility.classification as 'A' | 'B' | 'C'] || 0;
+      classificationAdjustment += adjustment;
+      console.log(`Utility ${servicingEntities.utility.classification} adjustment: ${adjustment}%`);
     }
     
     if (servicingEntities.financier && servicingEntities.financier.classification) {
-      probability += classificationBonus[servicingEntities.financier.classification as 'A' | 'B' | 'C'] || 0;
+      const adjustment = classificationBonus[servicingEntities.financier.classification as 'A' | 'B' | 'C'] || 0;
+      classificationAdjustment += adjustment;
+      console.log(`Financier ${servicingEntities.financier.classification} adjustment: ${adjustment}%`);
     }
+    
+    probability += classificationAdjustment;
+    console.log(`After classification adjustments: ${probability.toFixed(2)}%`);
     
     // Ensure probability is between 0 and 100
     probability = Math.max(0, Math.min(100, probability));
+    console.log(`Final probability: ${probability.toFixed(2)}%`);
     
     // Set prediction result
-    setPredictionResult({
+    actualSetPredictionResult({
       probability: Math.round(probability),
       nearbyProjects,
       ahj: servicingEntities.ahj,
@@ -1182,7 +1118,7 @@ const MapView: React.FC<MapViewProps> = ({
       qualifiedCount: qualifiedProjects.length,
       totalCount: nearbyProjects.length
     });
-  }, [predictionRadius, projects]);
+  }, [actualPredictionRadius, projects, actualSetPredictionResult]);
   
   // Function to find projects within radius
   const findProjectsInRadius = (
@@ -1323,6 +1259,14 @@ const MapView: React.FC<MapViewProps> = ({
     setIsDragging(false);
   };
 
+  // Handle closing the selected project
+  const handleCloseProject = () => {
+    setLocalSelectedProject(null);
+    if (onSelectProject) {
+      onSelectProject(null);
+    }
+  };
+
   // Render a project card
   const renderProjectCard = (project: Project) => {
     // Check if project belongs to current user
@@ -1386,233 +1330,334 @@ const MapView: React.FC<MapViewProps> = ({
     );
   };
 
+  const [filters, setFilters] = useState<ProjectFilter[]>([]);
+  const [searchTerms, setSearchTerms] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  const [showOnlyMyProjects, setShowOnlyMyProjects] = useState(false);
+
+  const handleSearch = (terms: string[]) => {
+    setSearchTerms(terms);
+  };
+
+  const handleViewModeChange = (mode: 'map' | 'list') => {
+    setViewMode(mode);
+  };
+
+  const toggleShowOnlyMyProjects = () => {
+    setShowOnlyMyProjects(!showOnlyMyProjects);
+  };
+
+  const addFilter = (filter: ProjectFilter) => {
+    setFilters([...filters, filter]);
+  };
+
+  const removeFilter = (filter: ProjectFilter) => {
+    setFilters(filters.filter(f => !(f.type === filter.type && f.value === filter.value)));
+  };
+
+  const clearFilters = () => {
+    setFilters([]);
+  };
+
+  const togglePredictionMode = () => {
+    const newMode = !actualPredictionModeActive;
+    actualSetPredictionRadius(newMode ? 5 : actualPredictionRadius);
+    
+    // Clear prediction results when turning off prediction mode
+    if (!newMode) {
+      actualSetPredictionResult(null);
+      
+      // Remove prediction pin and circle
+      const existingPin = document.getElementById('prediction-pin');
+      if (existingPin) {
+        existingPin.remove();
+      }
+      
+      if (mapRef.current && mapRef.current.getSource('prediction-radius')) {
+        mapRef.current.removeLayer('prediction-radius-fill');
+        mapRef.current.removeLayer('prediction-radius-outline');
+        mapRef.current.removeSource('prediction-radius');
+      }
+    }
+  };
+
+  useEffect(() => {
+    // When prediction mode is activated, we don't want to zoom to the selected project
+    // This flag will be used in the project selection effect
+    if (actualPredictionModeActive) {
+      // Clear local selection without triggering a zoom
+      setLocalSelectedProject(null);
+    }
+  }, [actualPredictionModeActive]);
+
+  // Add user controls for map movement
+  useEffect(() => {
+    // Add a control button to toggle map movement
+    if (mapRef.current && mapLoaded) {
+      const container = document.createElement('div');
+      container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+      container.style.backgroundColor = '#333';
+      container.style.color = 'white';
+      
+      const button = document.createElement('button');
+      button.className = 'map-movement-toggle';
+      button.innerHTML = allowMapMovement.selection ? '🔒' : '🔓';
+      button.title = allowMapMovement.selection ? 'Lock Map Position' : 'Allow Map Movement';
+      button.style.padding = '5px 10px';
+      button.style.fontSize = '16px';
+      button.style.cursor = 'pointer';
+      button.style.border = 'none';
+      button.style.backgroundColor = 'transparent';
+      button.style.color = 'white';
+      
+      button.addEventListener('click', () => {
+        setAllowMapMovement(prev => {
+          const newState = {
+            ...prev,
+            selection: !prev.selection,
+            utility: !prev.selection
+          };
+          button.innerHTML = newState.selection ? '🔒' : '🔓';
+          button.title = newState.selection ? 'Lock Map Position' : 'Allow Map Movement';
+          return newState;
+        });
+      });
+      
+      container.appendChild(button);
+      
+      // Add the custom control to the map
+      mapRef.current.addControl({
+        onAdd: () => container,
+        onRemove: () => {}
+      }, 'top-right');
+    }
+  }, [mapLoaded, allowMapMovement.selection]);
+
+  // Utility Overlay Effect
+  useEffect(() => {
+    const currentMap = mapRef.current;
+    console.log('[MapView] selectedUtility:', selectedUtility, 'mapLoaded:', mapLoaded);
+    if (!currentMap || !mapLoaded) return;
+
+    // Clean up previous utility layers and marker
+    if (currentMap.getLayer('utility-boundary-fill')) {
+      currentMap.removeLayer('utility-boundary-fill');
+      console.log('[MapView] Removed previous utility-boundary-fill layer');
+    }
+    if (currentMap.getLayer('utility-boundary-line')) {
+      currentMap.removeLayer('utility-boundary-line');
+      console.log('[MapView] Removed previous utility-boundary-line layer');
+    }
+    if (currentMap.getSource('utility-boundary')) {
+      currentMap.removeSource('utility-boundary');
+      console.log('[MapView] Removed previous utility-boundary source');
+    }
+    const prevMarker = document.getElementById('utility-marker');
+    if (prevMarker) {
+      prevMarker.remove();
+      console.log('[MapView] Removed previous utility marker');
+    }
+
+    if (!selectedUtility) {
+      console.log('[MapView] No selectedUtility, skipping overlay');
+      return;
+    }
+
+    // Fetch and add the utility GeoJSON
+    fetch(selectedUtility.geojson)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch utility geojson: ' + selectedUtility.geojson);
+        return res.json();
+      })
+      .then(geojson => {
+        console.log('[MapView] Loaded geojson for utility:', geojson);
+        currentMap.addSource('utility-boundary', {
+          type: 'geojson',
+          data: geojson
+        });
+        currentMap.addLayer({
+          id: 'utility-boundary-fill',
+          type: 'fill',
+          source: 'utility-boundary',
+          paint: {
+            'fill-color': '#000000',  // Black
+            'fill-opacity': 0.3
+          }
+        });
+        currentMap.addLayer({
+          id: 'utility-boundary-line',
+          type: 'line',
+          source: 'utility-boundary',
+          paint: {
+            'line-color': '#000000',  // Black
+            'line-width': 3,
+            'line-opacity': 0.8
+          }
+        });
+        // Zoom to utility boundary - only if user initiated
+        const bounds = new mapboxgl.LngLatBounds();
+        
+        // Add each project's coordinates to the bounds
+        geojson.features.forEach((feature: any) => {
+          if (feature.geometry.type === 'Polygon') {
+            feature.geometry.coordinates[0].forEach((coord: [number, number]) => {
+              bounds.extend(coord as [number, number]);
+            });
+          }
+        });
+        
+        if (!bounds.isEmpty() && allowMapMovement.utility) {
+          console.log('[MapView] Fitting map to utility bounds:', bounds);
+          currentMap.fitBounds(bounds, { padding: 50 });
+        }
+      })
+      .catch(err => {
+        console.error('[MapView] Error loading utility geojson:', err);
+      });
+
+    // Add utility marker
+    const markerEl = document.createElement('div');
+    markerEl.id = 'utility-marker';
+    markerEl.style.width = '28px';
+    markerEl.style.height = '28px';
+    markerEl.style.backgroundColor = '#FFFFFF';  // White
+    markerEl.style.border = '3px solid #000000';  // Black
+    markerEl.style.borderRadius = '50%';
+    markerEl.style.boxShadow = '0 0 10px 2px #000000';  // Black
+    markerEl.title = selectedUtility.name;
+    markerEl.style.display = 'flex';
+    markerEl.style.alignItems = 'center';
+    markerEl.style.justifyContent = 'center';
+    markerEl.style.zIndex = '10';
+    markerEl.innerHTML = '<svg width="14" height="14" fill="#000000" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg>';
+    new mapboxgl.Marker(markerEl)
+      .setLngLat([selectedUtility.location.lon, selectedUtility.location.lat])
+      .addTo(currentMap);
+    console.log('[MapView] Added utility marker at', selectedUtility.location.lon, selectedUtility.location.lat);
+
+    // Optionally fly to marker if no boundary - only if user initiated
+    if (!selectedUtility.geojson && allowMapMovement.utility) {
+      currentMap.flyTo({
+        center: [selectedUtility.location.lon, selectedUtility.location.lat],
+        zoom: 12,
+        essential: true
+      });
+      console.log('[MapView] Fly to utility marker');
+    }
+  }, [selectedUtility, mapLoaded]);
+
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
       
       {/* Project cards at the bottom */}
-      {(localSelectedProject || predictionResult) && (
+      {(sortedVisibleProjects.length > 0 || localSelectedProject) && (
         <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none">
-          <div className="relative overflow-hidden">
-            {/* Left scroll arrow */}
-            {showLeftArrow && visibleProjects.length > cardsToShow && (
-              <button
-                className="absolute left-0 top-1/2 transform -translate-y-1/2 z-10 bg-gray-900 p-2 rounded-full shadow-lg pointer-events-auto"
-                onClick={scrollCardLeft}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-            )}
-            
-            {/* Right scroll arrow */}
-            {showRightArrow && visibleProjects.length > cardsToShow && (
-              <button
-                className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10 bg-gray-900 p-2 rounded-full shadow-lg pointer-events-auto"
-                onClick={scrollCardRight}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            )}
-            
-            {/* Card list container */}
-            <div
-              ref={cardListRef}
-              className="flex space-x-4 overflow-x-auto scrollbar-hide pointer-events-auto"
-              onMouseDown={handleMouseDown}
-              onMouseLeave={handleMouseUpOrLeave}
-              onMouseUp={handleMouseUpOrLeave}
-              onMouseMove={handleMouseMove}
+          {/* Left scroll button */}
+          {showLeftArrow && (
+            <button
+              className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
+              onClick={scrollCardLeft}
             >
-              {/* Prediction Result Card */}
-              {predictionResult && (
-                <div 
-                  className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
-                >
-                  <div className="p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-lg font-semibold">45-Day Qualification Prediction</h3>
-                    </div>
-                    
-                    {/* Probability Display */}
-                    <div className="mb-4 text-center">
-                      <div className={`text-4xl font-bold mb-1 ${
-                        predictionResult.probability >= 70 ? 'text-green-500' : 
-                        predictionResult.probability >= 40 ? 'text-yellow-500' : 
-                        'text-red-500'
-                      }`}>
-                        {predictionResult.probability}%
-                      </div>
-                      <div className="text-sm text-gray-400">
-                        Estimated probability of 45-day qualification
-                      </div>
-                    </div>
-                    
-                    {/* Contributing Factors */}
-                    <div className="mb-4">
-                      <h4 className="text-sm font-medium text-gray-400 mb-2">Contributing Factors</h4>
-                      <div className="space-y-2">
-                        {/* AHJ */}
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">AHJ:</span>
-                          <div className="flex items-center">
-                            <span className="text-sm mr-2">
-                              {predictionResult.ahj ? predictionResult.ahj.name : 'Unknown'}
-                            </span>
-                            {predictionResult.ahj && (
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                getClassificationBadgeClass(predictionResult.ahj.classification)
-                              }`}>
-                                {predictionResult.ahj.classification}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Utility */}
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Utility:</span>
-                          <div className="flex items-center">
-                            <span className="text-sm mr-2">
-                              {predictionResult.utility ? predictionResult.utility.name : 'Unknown'}
-                            </span>
-                            {predictionResult.utility && (
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                getClassificationBadgeClass(predictionResult.utility.classification)
-                              }`}>
-                                {predictionResult.utility.classification}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Financier */}
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm">Financier:</span>
-                          <div className="flex items-center">
-                            <span className="text-sm mr-2">
-                              {predictionResult.financier ? predictionResult.financier.name : 'Unknown'}
-                            </span>
-                            {predictionResult.financier && (
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                getClassificationBadgeClass(predictionResult.financier.classification)
-                              }`}>
-                                {predictionResult.financier.classification}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Nearby Projects Stats */}
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+          
+          {/* Right scroll button */}
+          {showRightArrow && (
+            <button
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
+              onClick={scrollCardRight}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+          
+          <div 
+            ref={cardListRef}
+            className="flex space-x-4 overflow-x-auto pb-2 snap-x pointer-events-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent"
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUpOrLeave}
+            onMouseLeave={handleMouseUpOrLeave}
+            onMouseMove={handleMouseMove}
+          >
+            {/* Selected Project Card */}
+            {localSelectedProject && (
+              <div 
+                className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
+              >
+                <div className="p-4">
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="text-lg font-semibold">
+                      {localSelectedProject.isMasked 
+                        ? 'Project Details (Restricted)' 
+                        : localSelectedProject.ahj.name || 'Project Details'}
+                    </h3>
+                    <button 
+                      onClick={handleCloseProject}
+                      className="text-gray-400 hover:text-white pointer-events-auto"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
-                      <h4 className="text-sm font-medium text-gray-400 mb-2">Nearby Projects</h4>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm">45-Day Qualified:</span>
-                        <span className="text-sm">
-                          {predictionResult.qualifiedCount} of {predictionResult.totalCount} 
-                          ({predictionResult.totalCount > 0 
-                            ? Math.round((predictionResult.qualifiedCount / predictionResult.totalCount) * 100) 
-                            : 0}%)
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center mt-2">
-                        <span className="text-sm">Search Radius:</span>
-                        <div className="flex items-center">
-                          <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            value={predictionRadius}
-                            onChange={(e) => setPredictionRadius(parseInt(e.target.value))}
-                            className="w-24 mr-2"
-                          />
-                          <span className="text-sm">{predictionRadius} miles</span>
-                        </div>
-                      </div>
+                      <p className="text-gray-400">Address:</p>
+                      <p>{localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.address}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Status:</p>
+                      <p>{localSelectedProject.status}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">AHJ:</p>
+                      <p>
+                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.ahj.name}
+                        {localSelectedProject.ahj.classification && (
+                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.ahj.classification)}`}>
+                            {localSelectedProject.ahj.classification}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Utility:</p>
+                      <p>
+                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.utility.name}
+                        {localSelectedProject.utility.classification && (
+                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.utility.classification)}`}>
+                            {localSelectedProject.utility.classification}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Financier:</p>
+                      <p>
+                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.financier.name}
+                        {localSelectedProject.financier.classification && (
+                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.financier.classification)}`}>
+                            {localSelectedProject.financier.classification}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">45 Day Qualified:</p>
+                      <p>{mapQualificationStatus(localSelectedProject.qualifies45Day)}</p>
                     </div>
                   </div>
                 </div>
-              )}
-              
-              {/* Project Card (only show if prediction card is not showing) */}
-              {localSelectedProject && !predictionResult && (
-                <div 
-                  className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
-                >
-                  <div className="p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-lg font-semibold">
-                        {localSelectedProject.isMasked 
-                          ? 'Project Details (Restricted)' 
-                          : localSelectedProject.ahj.name || 'Project Details'}
-                      </h3>
-                      <button 
-                        onClick={handleCloseProject}
-                        className="text-gray-400 hover:text-white"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <p className="text-gray-400">Address:</p>
-                        <p>{localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.address}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Status:</p>
-                        <p>{localSelectedProject.status}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">AHJ:</p>
-                        <p>
-                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.ahj.name}
-                          {localSelectedProject.ahj.classification && (
-                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.ahj.classification)}`}>
-                              {localSelectedProject.ahj.classification}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Utility:</p>
-                        <p>
-                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.utility.name}
-                          {localSelectedProject.utility.classification && (
-                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.utility.classification)}`}>
-                              {localSelectedProject.utility.classification}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Financier:</p>
-                        <p>
-                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.financier.name}
-                          {localSelectedProject.financier.classification && (
-                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.financier.classification)}`}>
-                              {localSelectedProject.financier.classification}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">45 Day Qualified:</p>
-                        <p>{mapQualificationStatus(localSelectedProject.qualifies45Day)}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Visible Projects */}
-              {sortedVisibleProjects.map(project => renderProjectCard(project))}
-            </div>
+              </div>
+            )}
+            
+            {/* Project Cards */}
+            {sortedVisibleProjects.map(project => renderProjectCard(project))}
           </div>
         </div>
       )}
