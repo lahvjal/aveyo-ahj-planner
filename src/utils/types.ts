@@ -21,3 +21,42 @@ export interface ExcelAHJData {
   classification: string;
   address?: string;
 }
+
+// New interfaces for Project Browser pivot
+export interface Project {
+  id: string;
+  address: string;
+  latitude?: number;
+  longitude?: number;
+  ahj: {
+    id?: string;
+    name: string;
+    classification: string;
+  };
+  utility: {
+    id?: string;
+    name: string;
+    classification?: string;
+  };
+  financier: {
+    id?: string;
+    name: string;
+    classification?: string;
+  };
+  status?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  county?: string;
+  // New fields for 45 Day Program features
+  milestone?: string;
+  qualifies45Day?: string | boolean;
+  isMasked?: boolean;
+  rep_id?: string | null;
+  contract_signed_date?: string;
+}
+
+export interface ProjectFilter {
+  type: 'ahj' | 'utility' | 'financier' | '45day' | 'search' | 'myprojects';
+  value: string;
+}

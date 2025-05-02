@@ -8,10 +8,10 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   images: {
-    unoptimized: true,
+    domains: ['qdxlqtkrhnwhsfihnljc.supabase.co'],
   },
-  output: 'export',
-  distDir: 'out',
+  // Disable source maps in production to reduce bundle size
+  productionBrowserSourceMaps: false
 }
 
 module.exports = nextConfig

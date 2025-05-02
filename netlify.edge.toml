@@ -1,0 +1,4 @@
+# Netlify Edge Functions configuration for Next.js App Router
+[[edge_functions]]
+  path = "/*"
+  function = "next-handler"
