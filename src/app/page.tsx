@@ -27,6 +27,9 @@ export default function HomePage() {
   // State for selected project
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   
+  // State for prediction mode
+  const [predictionModeActive, setPredictionModeActive] = useState(false);
+  
   // Use the projects hook to fetch and filter data
   const { 
     projects, 
@@ -59,9 +62,23 @@ export default function HomePage() {
 
   // Handle project selection
   const handleSelectProject = (project: Project) => {
+    // Disable prediction mode when selecting a project
+    if (predictionModeActive) {
+      setPredictionModeActive(false);
+    }
+    
     setSelectedProject(prevSelected => 
       prevSelected && prevSelected.id === project.id ? null : project
     );
+  };
+
+  // Toggle prediction mode
+  const togglePredictionMode = () => {
+    // Clear selected project when entering prediction mode
+    if (!predictionModeActive) {
+      setSelectedProject(null);
+    }
+    setPredictionModeActive(!predictionModeActive);
   };
 
   // Handle sorting
@@ -111,6 +128,8 @@ export default function HomePage() {
               onViewModeChange={setViewMode}
               showOnlyMyProjects={showOnlyMyProjects}
               toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
+              predictionModeActive={predictionModeActive}
+              togglePredictionMode={togglePredictionMode}
             />
           </div>
         </div>
@@ -137,6 +156,7 @@ export default function HomePage() {
                       onSelectProject={(project) => {
                         if (project) handleSelectProject(project);
                       }}
+                      predictionModeActive={predictionModeActive}
                     />
                   ) : (
                     <EmptyStateMessage />

@@ -20,6 +20,8 @@ interface ImprovedFilterPanelProps {
   onViewModeChange: (mode: 'map' | 'list') => void;
   showOnlyMyProjects?: boolean;
   toggleShowOnlyMyProjects?: () => void;
+  predictionModeActive?: boolean;
+  togglePredictionMode?: () => void;
 }
 
 const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
@@ -32,7 +34,9 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
   viewMode,
   onViewModeChange,
   showOnlyMyProjects,
-  toggleShowOnlyMyProjects
+  toggleShowOnlyMyProjects,
+  predictionModeActive,
+  togglePredictionMode
 }) => {
   const [searchInput, setSearchInput] = useState('');
   const { signOut } = useAuth();
@@ -299,16 +303,38 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
         </div>
         
         {/* My Projects Toggle */}
-        <div className="px-4 py-2">
-          <ToggleSwitch 
-            isOn={showOnlyMyProjects || false}
-            onToggle={() => {
-              if (toggleShowOnlyMyProjects) {
-                toggleShowOnlyMyProjects();
-              }
-            }}
-            label="Filter My Projects"
-          />
+        <div className="mt-4 pt-4 border-t border-gray-700">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Filter My Projects</span>
+            <ToggleSwitch 
+              isOn={showOnlyMyProjects || false}
+              onToggle={() => {
+                if (toggleShowOnlyMyProjects) {
+                  toggleShowOnlyMyProjects();
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* 45-Day Prediction Tool */}
+        <div className="mt-4 pt-4 border-t border-gray-700">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">45-Day Predictor</span>
+            <ToggleSwitch 
+              isOn={predictionModeActive || false}
+              onToggle={() => {
+                if (togglePredictionMode) {
+                  togglePredictionMode();
+                }
+              }}
+            />
+          </div>
+          {predictionModeActive && (
+            <div className="mt-2 text-xs text-gray-400">
+              Click anywhere on the map to predict 45-day qualification probability
+            </div>
+          )}
         </div>
         
         {/* Logout Button */}

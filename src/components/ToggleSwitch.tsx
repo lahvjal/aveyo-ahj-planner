@@ -3,13 +3,13 @@ import React from 'react';
 interface ToggleSwitchProps {
   isOn: boolean;
   onToggle: () => void;
-  label: string;
+  label?: string;
 }
 
 const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ isOn, onToggle, label }) => {
   return (
     <div className="flex items-center justify-between py-3">
-      <span className="text-white">{label}</span>
+      {label && <span className="text-white">{label}</span>}
       <button 
         onClick={onToggle}
         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${

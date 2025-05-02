@@ -18,6 +18,7 @@ interface MapViewProps {
   projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
+  predictionModeActive?: boolean;
 }
 
 const MapView: React.FC<MapViewProps> = ({
@@ -27,7 +28,8 @@ const MapView: React.FC<MapViewProps> = ({
   selectedUtility,
   projects,
   selectedProject,
-  onSelectProject
+  onSelectProject,
+  predictionModeActive = false
 }) => {
   const { userProfile } = useAuth();
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -42,13 +44,27 @@ const MapView: React.FC<MapViewProps> = ({
   const [visibleProjects, setVisibleProjects] = useState<Project[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollLeftPos, setScrollLeftPos] = useState(0);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
   const [mapMoved, setMapMoved] = useState(false);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const cardsToShow = 3; // Number of cards to show at once
   const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
+  
+  // Prediction mode state
+  const [predictionPin, setPredictionPin] = useState<mapboxgl.Marker | null>(null);
+  const [predictionRadius, setPredictionRadius] = useState<number>(5); // miles
+  const [predictionResult, setPredictionResult] = useState<{
+    probability: number;
+    nearbyProjects: Project[];
+    ahj: { id: string; name: string; classification: string } | null;
+    utility: { id: string; name: string; classification: string } | null;
+    financier: { id: string; name: string; classification: string } | null;
+    qualifiedCount: number;
+    totalCount: number;
+  } | null>(null);
+  const predictionRadiusRef = useRef<mapboxgl.GeoJSONSource | null>(null);
 
   // Memoize visible projects to prevent unnecessary re-renders
   const sortedVisibleProjects = useMemo(() => {
@@ -391,8 +407,8 @@ const MapView: React.FC<MapViewProps> = ({
     if (!cardListRef.current) return;
 
     setIsDragging(true);
-    setStartX(e.pageX - cardListRef.current.offsetLeft);
-    setScrollLeft(cardListRef.current.scrollLeft);
+    setStartX(e.pageX);
+    setScrollLeftPos(cardListRef.current.scrollLeft);
   };
 
   // Handle mouse leave and mouse up
@@ -405,9 +421,22 @@ const MapView: React.FC<MapViewProps> = ({
     if (!isDragging || !cardListRef.current) return;
 
     e.preventDefault();
-    const x = e.pageX - cardListRef.current.offsetLeft;
+    const x = e.pageX;
     const walk = (x - startX) * 2; // Scroll speed multiplier
-    cardListRef.current.scrollLeft = scrollLeft - walk;
+    cardListRef.current.scrollLeft = scrollLeftPos - walk;
+  };
+
+  // Scroll functions for card list
+  const scrollCardLeft = () => {
+    if (cardListRef.current) {
+      cardListRef.current.scrollBy({ left: -300, behavior: 'smooth' });
+    }
+  };
+
+  const scrollCardRight = () => {
+    if (cardListRef.current) {
+      cardListRef.current.scrollBy({ left: 300, behavior: 'smooth' });
+    }
   };
 
   // Handle arrow click
@@ -937,6 +966,363 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [projects, localSelectedProject, mapLoaded, onSelectProject, userProfile]);
 
+  // Effect to handle prediction mode changes
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    const map = mapRef.current;
+    
+    // Clean up prediction elements when prediction mode is disabled
+    if (!predictionModeActive) {
+      if (predictionPin) {
+        predictionPin.remove();
+        setPredictionPin(null);
+      }
+      
+      if (map.getSource('prediction-radius')) {
+        map.removeLayer('prediction-radius-fill');
+        map.removeLayer('prediction-radius-outline');
+        map.removeSource('prediction-radius');
+      }
+      
+      setPredictionResult(null);
+      return;
+    }
+    
+    // Add click handler for prediction mode
+    const handleMapClick = (e: mapboxgl.MapMouseEvent) => {
+      if (!predictionModeActive || !map) return;
+      
+      // Get clicked coordinates
+      const { lng: clickedLng, lat: clickedLat } = e.lngLat;
+      
+      // Remove existing prediction pin if any
+      if (predictionPin) {
+        predictionPin.remove();
+      }
+      
+      // Create prediction pin element
+      const pinElement = document.createElement('div');
+      pinElement.className = 'prediction-pin';
+      pinElement.style.width = '30px';
+      pinElement.style.height = '30px';
+      pinElement.style.backgroundImage = 'url(/pin_prediction.svg)';
+      pinElement.style.backgroundSize = 'contain';
+      pinElement.style.backgroundRepeat = 'no-repeat';
+      
+      // Add new prediction pin
+      const newPin = new mapboxgl.Marker(pinElement)
+        .setLngLat([clickedLng, clickedLat])
+        .addTo(map);
+      
+      setPredictionPin(newPin);
+      
+      // Create or update radius circle
+      const radiusInMeters = predictionRadius * 1609.34; // Convert miles to meters
+      const radiusOptions = {
+        steps: 64,
+        units: 'meters' as const
+      };
+      
+      // Create a GeoJSON circle
+      const createGeoJSONCircle = (center: [number, number], radiusInMeters: number) => {
+        const points = 64;
+        const coords = {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Polygon' as const,
+            coordinates: [[]] as number[][][]
+          },
+          properties: {}
+        };
+        
+        const degreePerPoint = 360 / points;
+        
+        for (let i = 0; i < points; i++) {
+          const degree = degreePerPoint * i;
+          const radian = degree * Math.PI / 180;
+          const x = center[0] + (radiusInMeters / 111320 * Math.cos(radian));
+          const y = center[1] + (radiusInMeters / 111320 * Math.sin(radian) / Math.cos(center[1] * Math.PI / 180));
+          coords.geometry.coordinates[0].push([x, y]);
+        }
+        
+        // Close the polygon
+        coords.geometry.coordinates[0].push(coords.geometry.coordinates[0][0]);
+        
+        return coords;
+      };
+      
+      const circleGeoJSON = createGeoJSONCircle([clickedLng, clickedLat], radiusInMeters);
+      
+      // Add or update the radius source and layers
+      if (map.getSource('prediction-radius')) {
+        const source = map.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
+        source.setData(circleGeoJSON as any);
+        predictionRadiusRef.current = source;
+      } else {
+        map.addSource('prediction-radius', {
+          type: 'geojson',
+          data: circleGeoJSON as any
+        });
+        
+        map.addLayer({
+          id: 'prediction-radius-fill',
+          type: 'fill',
+          source: 'prediction-radius',
+          layout: {},
+          paint: {
+            'fill-color': '#5B8FF9',
+            'fill-opacity': 0.15
+          }
+        });
+        
+        map.addLayer({
+          id: 'prediction-radius-outline',
+          type: 'line',
+          source: 'prediction-radius',
+          layout: {},
+          paint: {
+            'line-color': '#5B8FF9',
+            'line-width': 2
+          }
+        });
+        
+        predictionRadiusRef.current = map.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
+      }
+      
+      // Calculate prediction
+      calculatePrediction(clickedLat, clickedLng);
+    };
+    
+    // Add click handler
+    map.on('click', handleMapClick);
+    
+    // Cleanup function
+    return () => {
+      map.off('click', handleMapClick);
+    };
+  }, [predictionModeActive, mapLoaded, predictionPin, predictionRadius, projects]);
+  
+  // Function to calculate prediction
+  const calculatePrediction = useCallback((lat: number, lng: number) => {
+    if (!projects || projects.length === 0) {
+      setPredictionResult({
+        probability: 0,
+        nearbyProjects: [],
+        ahj: null,
+        utility: null,
+        financier: null,
+        qualifiedCount: 0,
+        totalCount: 0
+      });
+      return;
+    }
+    
+    // Find nearby projects within radius
+    const nearbyProjects = findProjectsInRadius(lat, lng, predictionRadius, projects);
+    
+    if (nearbyProjects.length === 0) {
+      setPredictionResult({
+        probability: 0,
+        nearbyProjects: [],
+        ahj: null,
+        utility: null,
+        financier: null,
+        qualifiedCount: 0,
+        totalCount: 0
+      });
+      return;
+    }
+    
+    // Determine likely AHJ, utility, and financier based on nearby projects
+    const servicingEntities = determineServicingEntitiesByMajority(nearbyProjects);
+    
+    // Count qualified projects
+    const qualifiedProjects = nearbyProjects.filter(project => 
+      isQualified(project.qualifies45Day)
+    );
+    
+    // Calculate probability based on:
+    // 1. Percentage of nearby qualified projects
+    // 2. Classifications of AHJ, utility, and financier
+    
+    // Base probability from nearby project qualification rate
+    let probability = (qualifiedProjects.length / nearbyProjects.length) * 100;
+    
+    // Adjust probability based on entity classifications
+    const classificationBonus = {
+      'A': 20, // A classification adds 20% to probability
+      'B': 0,  // B classification is neutral
+      'C': -20 // C classification subtracts 20% from probability
+    };
+    
+    // Apply classification adjustments if entities are found
+    if (servicingEntities.ahj && servicingEntities.ahj.classification) {
+      probability += classificationBonus[servicingEntities.ahj.classification as 'A' | 'B' | 'C'] || 0;
+    }
+    
+    if (servicingEntities.utility && servicingEntities.utility.classification) {
+      probability += classificationBonus[servicingEntities.utility.classification as 'A' | 'B' | 'C'] || 0;
+    }
+    
+    if (servicingEntities.financier && servicingEntities.financier.classification) {
+      probability += classificationBonus[servicingEntities.financier.classification as 'A' | 'B' | 'C'] || 0;
+    }
+    
+    // Ensure probability is between 0 and 100
+    probability = Math.max(0, Math.min(100, probability));
+    
+    // Set prediction result
+    setPredictionResult({
+      probability: Math.round(probability),
+      nearbyProjects,
+      ahj: servicingEntities.ahj,
+      utility: servicingEntities.utility,
+      financier: servicingEntities.financier,
+      qualifiedCount: qualifiedProjects.length,
+      totalCount: nearbyProjects.length
+    });
+  }, [predictionRadius, projects]);
+  
+  // Function to find projects within radius
+  const findProjectsInRadius = (
+    pinLat: number, 
+    pinLng: number, 
+    radiusInMiles: number, 
+    allProjects: Project[]
+  ): Project[] => {
+    // Convert miles to kilometers (Haversine uses km)
+    const radiusInKm = radiusInMiles * 1.60934;
+    
+    return allProjects.filter(project => {
+      if (!project.latitude || !project.longitude) return false;
+      
+      // Calculate distance using Haversine formula
+      const distance = calculateHaversineDistance(
+        pinLat, pinLng, 
+        project.latitude, project.longitude
+      );
+      
+      // Return projects within the radius
+      return distance <= radiusInKm;
+    });
+  };
+  
+  // Haversine formula implementation
+  const calculateHaversineDistance = (
+    lat1: number, lon1: number, 
+    lat2: number, lon2: number
+  ): number => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; // Distance in km
+  };
+  
+  // Function to determine servicing entities by majority vote
+  const determineServicingEntitiesByMajority = (
+    nearbyProjects: Project[]
+  ): { 
+    ahj: { id: string; name: string; classification: string } | null;
+    utility: { id: string; name: string; classification: string } | null;
+    financier: { id: string; name: string; classification: string } | null;
+  } => {
+    // Count occurrences
+    const ahjCounts: Record<string, { count: number; name: string; classification: string }> = {};
+    const utilityCounts: Record<string, { count: number; name: string; classification: string }> = {};
+    const financierCounts: Record<string, { count: number; name: string; classification: string }> = {};
+    
+    nearbyProjects.forEach(project => {
+      // Count AHJs
+      if (project.ahj?.id) {
+        if (!ahjCounts[project.ahj.id]) {
+          ahjCounts[project.ahj.id] = { 
+            count: 0, 
+            name: project.ahj.name || 'Unknown',
+            classification: project.ahj.classification || 'B'
+          };
+        }
+        ahjCounts[project.ahj.id].count++;
+      }
+      
+      // Count utilities
+      if (project.utility?.id) {
+        if (!utilityCounts[project.utility.id]) {
+          utilityCounts[project.utility.id] = { 
+            count: 0, 
+            name: project.utility.name || 'Unknown',
+            classification: project.utility.classification || 'B'
+          };
+        }
+        utilityCounts[project.utility.id].count++;
+      }
+      
+      // Count financiers
+      if (project.financier?.id) {
+        if (!financierCounts[project.financier.id]) {
+          financierCounts[project.financier.id] = { 
+            count: 0, 
+            name: project.financier.name || 'Unknown',
+            classification: project.financier.classification || 'B'
+          };
+        }
+        financierCounts[project.financier.id].count++;
+      }
+    });
+    
+    // Find most common entities
+    const findMostCommon = (
+      counts: Record<string, { count: number; name: string; classification: string }>
+    ): { id: string; name: string; classification: string } | null => {
+      let maxCount = 0;
+      let mostCommon = null;
+      
+      Object.entries(counts).forEach(([id, data]) => {
+        if (data.count > maxCount) {
+          maxCount = data.count;
+          mostCommon = { id, name: data.name, classification: data.classification };
+        }
+      });
+      
+      return mostCommon;
+    };
+    
+    return {
+      ahj: findMostCommon(ahjCounts),
+      utility: findMostCommon(utilityCounts),
+      financier: findMostCommon(financierCounts)
+    };
+  };
+
+  // Scroll functions for the card list
+  const scrollLeft = () => {
+    if (cardListRef.current) {
+      cardListRef.current.scrollBy({ left: -300, behavior: 'smooth' });
+    }
+  };
+
+  const scrollRight = () => {
+    if (cardListRef.current) {
+      cardListRef.current.scrollBy({ left: 300, behavior: 'smooth' });
+    }
+  };
+
+  // Mouse event handlers for dragging
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+  };
+
   // Render a project card
   const renderProjectCard = (project: Project) => {
     // Check if project belongs to current user
@@ -1001,96 +1387,30 @@ const MapView: React.FC<MapViewProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full rounded-md overflow-hidden">
-      <div ref={mapContainer} className="absolute inset-0" />
-
-      {/* Horizontal scrollable project cards with navigation arrows */}
-      <div className="absolute bottom-0 left-0 right-0 p-4 z-20">
-        {localSelectedProject ? (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 max-w-2xl w-full px-4">
-          <div className="bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg p-4 border border-gray-700">
-            <div className="flex justify-between items-start mb-2">
-              <h3 className="text-lg font-semibold">
-                {localSelectedProject.isMasked 
-                  ? 'Project Details (Restricted)' 
-                  : localSelectedProject.ahj.name || 'Project Details'}
-              </h3>
-              <button 
-                onClick={handleCloseProject}
-                className="text-gray-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div>
-                <p className="text-gray-400">Address:</p>
-                <p>{localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.address}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">Status:</p>
-                <p>{localSelectedProject.status}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">AHJ:</p>
-                <p>
-                  {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.ahj.name}
-                  {localSelectedProject.ahj.classification && (
-                    <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.ahj.classification)}`}>
-                      {localSelectedProject.ahj.classification}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-400">Utility:</p>
-                <p>
-                  {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.utility.name}
-                  {localSelectedProject.utility.classification && (
-                    <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.utility.classification)}`}>
-                      {localSelectedProject.utility.classification}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-400">Financier:</p>
-                <p>
-                  {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.financier.name}
-                  {localSelectedProject.financier.classification && (
-                    <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.financier.classification)}`}>
-                      {localSelectedProject.financier.classification}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-400">45 Day Qualified:</p>
-                <p>{mapQualificationStatus(localSelectedProject.qualifies45Day)}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        ) : sortedVisibleProjects && sortedVisibleProjects.length > 0 ? (
-          <div className="relative">
-            {/* Left navigation arrow */}
-            {showLeftArrow && (
+    <div className="relative w-full h-full">
+      <div ref={mapContainer} className="w-full h-full" />
+      
+      {/* Project cards at the bottom */}
+      {(localSelectedProject || predictionResult) && (
+        <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none">
+          <div className="relative overflow-hidden">
+            {/* Left scroll arrow */}
+            {showLeftArrow && visibleProjects.length > cardsToShow && (
               <button
-                className="absolute left-0 top-1/2 transform -translate-y-1/2 z-10 bg-neutral-800/80 hover:bg-neutral-700/80 rounded-full p-2 shadow-lg"
-                onClick={() => handleArrowClick('left')}
+                className="absolute left-0 top-1/2 transform -translate-y-1/2 z-10 bg-gray-900 p-2 rounded-full shadow-lg pointer-events-auto"
+                onClick={scrollCardLeft}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
             )}
-
-            {/* Right navigation arrow */}
-            {showRightArrow && (
+            
+            {/* Right scroll arrow */}
+            {showRightArrow && visibleProjects.length > cardsToShow && (
               <button
-                className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10 bg-neutral-800/80 hover:bg-neutral-700/80 rounded-full p-2 shadow-lg"
-                onClick={() => handleArrowClick('right')}
+                className="absolute right-0 top-1/2 transform -translate-y-1/2 z-10 bg-gray-900 p-2 rounded-full shadow-lg pointer-events-auto"
+                onClick={scrollCardRight}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -1098,45 +1418,204 @@ const MapView: React.FC<MapViewProps> = ({
               </button>
             )}
             
-            {/* Draggable card list */}
+            {/* Card list container */}
             <div
               ref={cardListRef}
-              className="flex overflow-x-auto pb-2 h-40 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"
+              className="flex space-x-4 overflow-x-auto scrollbar-hide pointer-events-auto"
               onMouseDown={handleMouseDown}
-              onMouseUp={handleMouseUpOrLeave}
               onMouseLeave={handleMouseUpOrLeave}
+              onMouseUp={handleMouseUpOrLeave}
               onMouseMove={handleMouseMove}
-              style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             >
-              {sortedVisibleProjects
-                .map(project => renderProjectCard(project))}
+              {/* Prediction Result Card */}
+              {predictionResult && (
+                <div 
+                  className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
+                >
+                  <div className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="text-lg font-semibold">45-Day Qualification Prediction</h3>
+                    </div>
+                    
+                    {/* Probability Display */}
+                    <div className="mb-4 text-center">
+                      <div className={`text-4xl font-bold mb-1 ${
+                        predictionResult.probability >= 70 ? 'text-green-500' : 
+                        predictionResult.probability >= 40 ? 'text-yellow-500' : 
+                        'text-red-500'
+                      }`}>
+                        {predictionResult.probability}%
+                      </div>
+                      <div className="text-sm text-gray-400">
+                        Estimated probability of 45-day qualification
+                      </div>
+                    </div>
+                    
+                    {/* Contributing Factors */}
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium text-gray-400 mb-2">Contributing Factors</h4>
+                      <div className="space-y-2">
+                        {/* AHJ */}
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">AHJ:</span>
+                          <div className="flex items-center">
+                            <span className="text-sm mr-2">
+                              {predictionResult.ahj ? predictionResult.ahj.name : 'Unknown'}
+                            </span>
+                            {predictionResult.ahj && (
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                getClassificationBadgeClass(predictionResult.ahj.classification)
+                              }`}>
+                                {predictionResult.ahj.classification}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Utility */}
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Utility:</span>
+                          <div className="flex items-center">
+                            <span className="text-sm mr-2">
+                              {predictionResult.utility ? predictionResult.utility.name : 'Unknown'}
+                            </span>
+                            {predictionResult.utility && (
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                getClassificationBadgeClass(predictionResult.utility.classification)
+                              }`}>
+                                {predictionResult.utility.classification}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Financier */}
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Financier:</span>
+                          <div className="flex items-center">
+                            <span className="text-sm mr-2">
+                              {predictionResult.financier ? predictionResult.financier.name : 'Unknown'}
+                            </span>
+                            {predictionResult.financier && (
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                getClassificationBadgeClass(predictionResult.financier.classification)
+                              }`}>
+                                {predictionResult.financier.classification}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Nearby Projects Stats */}
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-400 mb-2">Nearby Projects</h4>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm">45-Day Qualified:</span>
+                        <span className="text-sm">
+                          {predictionResult.qualifiedCount} of {predictionResult.totalCount} 
+                          ({predictionResult.totalCount > 0 
+                            ? Math.round((predictionResult.qualifiedCount / predictionResult.totalCount) * 100) 
+                            : 0}%)
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center mt-2">
+                        <span className="text-sm">Search Radius:</span>
+                        <div className="flex items-center">
+                          <input
+                            type="range"
+                            min="1"
+                            max="20"
+                            value={predictionRadius}
+                            onChange={(e) => setPredictionRadius(parseInt(e.target.value))}
+                            className="w-24 mr-2"
+                          />
+                          <span className="text-sm">{predictionRadius} miles</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Project Card (only show if prediction card is not showing) */}
+              {localSelectedProject && !predictionResult && (
+                <div 
+                  className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
+                >
+                  <div className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="text-lg font-semibold">
+                        {localSelectedProject.isMasked 
+                          ? 'Project Details (Restricted)' 
+                          : localSelectedProject.ahj.name || 'Project Details'}
+                      </h3>
+                      <button 
+                        onClick={handleCloseProject}
+                        className="text-gray-400 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-gray-400">Address:</p>
+                        <p>{localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.address}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Status:</p>
+                        <p>{localSelectedProject.status}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">AHJ:</p>
+                        <p>
+                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.ahj.name}
+                          {localSelectedProject.ahj.classification && (
+                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.ahj.classification)}`}>
+                              {localSelectedProject.ahj.classification}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Utility:</p>
+                        <p>
+                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.utility.name}
+                          {localSelectedProject.utility.classification && (
+                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.utility.classification)}`}>
+                              {localSelectedProject.utility.classification}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Financier:</p>
+                        <p>
+                          {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.financier.name}
+                          {localSelectedProject.financier.classification && (
+                            <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.financier.classification)}`}>
+                              {localSelectedProject.financier.classification}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">45 Day Qualified:</p>
+                        <p>{mapQualificationStatus(localSelectedProject.qualifies45Day)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Visible Projects */}
+              {sortedVisibleProjects.map(project => renderProjectCard(project))}
             </div>
           </div>
-        ) : (
-          <div className="bg-textured-neutral-800/90 backdrop-blur-sm p-4 rounded-lg shadow-lg text-center max-w-md mx-auto">
-            <p className="text-neutral-300">No projects to display. Try adjusting your filters.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Styles for markers */}
-      <style jsx global>{`
-        .unknown-marker {
-          background-color: #999999;  // Light gray
-          border: 2px solid #FFFFFF;  // White
-        }
-        .qualification-badge {
-          background-color: #4CAF50; // Green
-          border: 2px solid white;
-        }
-        .text-shadow {
-          text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
-        }
-        .user-project-indicator {
-          background-color: #007bff; // Blue
-          border: 1px solid white;
-        }
-      `}</style>
+        </div>
+      )}
     </div>
   );
 };
