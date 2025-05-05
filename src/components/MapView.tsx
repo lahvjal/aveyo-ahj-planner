@@ -105,8 +105,28 @@ const MapView: React.FC<MapViewProps> = ({
     };
   };
 
+  // Function to prepare heatmap data from projects
+  const prepareHeatmapData = (projectsData: Project[]) => {
+    // Add weight to each point based on whether it's complete or not
+    return {
+      type: 'FeatureCollection' as const,
+      features: projectsData.map(project => ({
+        type: 'Feature' as const,
+        properties: {
+          id: project.id,
+          isComplete: !project.isMasked,
+          // Add weight property to make points more visible
+          weight: 1.5
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [project.longitude || 0, project.latitude || 0]
+        }
+      }))
+    };
+  };
+
   // Flag to track if map movements should be allowed
-  // This prevents automatic map movements when filters change or data updates
   const [allowMapMovement, setAllowMapMovement] = useState<{
     initial: boolean; // Allow initial map setup movement
     selection: boolean; // Allow movement when selecting a project
@@ -659,294 +679,190 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [selectedProject]);
 
-  // Add project markers to the map - optimized version
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    if (!currentMap || !mapLoaded) return;
+  // Function to create markers for projects
+  const createMarkersForProjects = (projectsToShow: Project[]) => {
+    if (!mapRef.current) return [];
     
-    console.log('[MapView] Adding markers for', projects?.length || 0, 'projects');
-    
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.remove());
-    markersRef.current = [];
-    
-    // If there are no projects matching the filters, don't add any markers
-    if (!projects || projects.length === 0) {
-      console.log('[MapView] No projects match the current filters');
-      return;
-    }
-    
-    // Preload SVG images to improve performance
-    const preloadImages = [
-      '/pin_green.svg', 
-      '/pin_green_active.svg',
-      '/pin_blue.svg', 
-      '/pin_blue_active.svg',
-      '/pin_orange.svg', 
-      '/pin_orange_active.svg',
-      '/pin_grey.svg', 
-      '/pin_grey_active.svg'
-    ];
-    
-    preloadImages.forEach(src => {
-      const img = new Image();
-      img.src = src;
-    });
-    
-    // Create markers in batches to improve performance
-    const batchSize = 20;
-    let currentBatch = 0;
-    
-    const createMarkerBatch = () => {
-      const start = currentBatch * batchSize;
-      const end = Math.min(start + batchSize, projects.length);
-      const batch = projects.slice(start, end);
-      
-      batch.forEach(project => {
-        // Skip projects with invalid coordinates
-        if (typeof project.latitude !== 'number' || typeof project.longitude !== 'number' || 
-            isNaN(project.latitude) || isNaN(project.longitude)) {
-          return;
+    return projectsToShow
+      .map(project => {
+        if (!project.latitude || !project.longitude) return null;
+        
+        // Get pin color based on AHJ classification
+        let pinImage = '/pin_grey.svg';
+        
+        if (project.ahj.classification) {
+          if (project.ahj.classification === 'A') {
+            pinImage = '/pin_green_active.svg';
+          } else if (project.ahj.classification === 'B') {
+            pinImage = '/pin_blue_active.svg';
+          } else if (project.ahj.classification === 'C') {
+            pinImage = '/pin_orange_active.svg';
+          } else {
+            pinImage = '/pin_grey_active.svg';
+          }
         }
         
-        // Get classification based on current view
-        let classification = '';
-        classification = project.ahj.classification || '';
-        
-        // Select the appropriate pin image
-        let pinImage = '';
-        if (classification === 'A') {
-          pinImage = project.isMasked ? '/pin_green.svg' : '/pin_green_active.svg';
-        } else if (classification === 'B') {
-          pinImage = project.isMasked ? '/pin_blue.svg' : '/pin_blue_active.svg';
-        } else if (classification === 'C') {
-          pinImage = project.isMasked ? '/pin_orange.svg' : '/pin_orange_active.svg';
-        } else {
-          pinImage = project.isMasked ? '/pin_grey.svg' : '/pin_grey_active.svg';
-        }
-
         // Create marker element
         const el = document.createElement('div');
-        el.className = 'project-marker';
+        el.className = 'marker';
+        el.style.backgroundImage = `url(${pinImage})`;
         el.style.width = '30px';
         el.style.height = '30px';
-        el.style.backgroundImage = `url(${pinImage})`;
         el.style.backgroundSize = 'contain';
         el.style.backgroundRepeat = 'no-repeat';
         el.style.cursor = 'pointer';
         
-        // Check if project belongs to current user
-        const isUserProject = project.rep_id && userProfile?.rep_id && project.rep_id === userProfile.rep_id;
+        // Create popup
+        const popup = new mapboxgl.Popup({
+          offset: 25,
+          closeButton: false,
+          className: 'custom-popup'
+        }).setHTML(`
+          <div class="p-2">
+            <h3 class="text-sm font-semibold">${project.address}</h3>
+            <p class="text-xs">AHJ: ${project.ahj.name}</p>
+            <p class="text-xs">Status: ${project.status}</p>
+          </div>
+        `);
         
-        // Add user project indicator if applicable
-        if (isUserProject) {
-          const userIndicator = document.createElement('div');
-          userIndicator.className = 'user-project-indicator';
-          userIndicator.style.position = 'absolute';
-          userIndicator.style.top = '2px';
-          userIndicator.style.left = '-5px';
-          userIndicator.style.width = '10px';
-          userIndicator.style.height = '10px';
-          userIndicator.style.borderRadius = '50%';
-          userIndicator.style.backgroundColor = '#007bff'; // Blue
-          userIndicator.title = 'Assigned to you';
-          el.appendChild(userIndicator);
-        }
+        // Create and return marker
+        const marker = new mapboxgl.Marker(el)
+          .setLngLat([project.longitude, project.latitude])
+          .setPopup(popup)
+          .addTo(mapRef.current!);
         
-        // Add 45 Day qualification indicator if applicable
-        if (isQualified(project.qualifies45Day)) {
-          const badge = document.createElement('div');
-          badge.className = 'qualification-badge';
-          badge.style.position = 'absolute';
-          badge.style.top = '-5px';
-          badge.style.right = '-5px';
-          badge.style.width = '12px';
-          badge.style.height = '12px';
-          badge.style.borderRadius = '50%';
-          badge.style.backgroundColor = '#4CAF50'; // Green
-          badge.style.border = '2px solid white';
-          badge.title = '45 Day Program Qualified';
-          el.appendChild(badge);
-          el.style.position = 'relative'; // Needed for positioning the badge
-        }
-        
-        // Add title for masked projects
-        if (project.isMasked) {
-          el.title = 'Non-active project — restricted info';
-        }
-        
-        try {
-          // Create a marker with consistent options for all markers
-          const marker = new mapboxgl.Marker({
-            element: el,
-            anchor: 'center',
-            draggable: false,
-            offset: [0, 0],
-            rotationAlignment: 'map',
-            pitchAlignment: 'map'
-          })
-            .setLngLat([project.longitude, project.latitude])
-            .addTo(currentMap);
-          
-          // Store marker reference
-          markersRef.current.push(marker);
-
-          // Add click event
-          el.addEventListener('click', () => {
-            handleProjectClick(project);
-          });
-
-          // Highlight selected project
-          if (localSelectedProject && project.id === localSelectedProject.id) {
-            el.style.width = '40px';
-            el.style.height = '40px';
-            el.style.zIndex = '10';
-          }
-        } catch (error) {
-          console.error(`[MapView] Error creating marker for project ${project.id}:`, error);
-        }
-      });
-      
-      currentBatch++;
-      
-      // If there are more batches to process, schedule the next batch
-      if (currentBatch * batchSize < projects.length) {
-        setTimeout(createMarkerBatch, 0);
-      }
-    };
-    
-    // Start creating markers in batches
-    createMarkerBatch();
-    
-    // If a project is selected, fly to it - but only if prediction mode is not active
-    // and only if user initiated the selection
-    if (localSelectedProject && 
-        !actualPredictionModeActive &&
-        allowMapMovement.selection &&
-        typeof localSelectedProject.latitude === 'number' && !isNaN(localSelectedProject.latitude) &&
-        typeof localSelectedProject.longitude === 'number' && !isNaN(localSelectedProject.longitude)) {
-      try {
-        currentMap.flyTo({
-          center: [localSelectedProject.longitude, localSelectedProject.latitude],
-          zoom: 14,
-          essential: true
+        // Add click handler
+        el.addEventListener('click', () => {
+          handleProjectClick(project);
         });
-      } catch (error) {
-        console.error('[MapView] Error flying to selected project:', error);
-      }
-    }
-  }, [projects, localSelectedProject, mapLoaded, onSelectProject, userProfile, actualPredictionModeActive]);
+        
+        return marker;
+      })
+      .filter(Boolean) as mapboxgl.Marker[];
+  };
+
+  // Add project markers to map
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    console.log('[MapView] Adding markers for', projects?.length || 0, 'projects');
+    
+    // Clear existing markers
+    projectMarkers.forEach(marker => marker.remove());
+    
+    // Only create markers for unmasked projects
+    const newMarkers = createMarkersForProjects(projects?.filter(project => !project.isMasked) || []);
+    setProjectMarkers(newMarkers);
+  }, [projects, mapLoaded, actualPredictionModeActive]);
 
   // Effect to handle prediction mode changes
   useEffect(() => {
-    const currentMap = mapRef.current;
-    if (!currentMap || !mapLoaded) return;
+    if (!mapRef.current || !mapLoaded) return;
     
-    // Clean up prediction elements when prediction mode is disabled
-    if (!actualPredictionModeActive) {
-      if (actualPredictionPinLocation) {
-        // Remove existing prediction pin if any
-        const existingPin = document.getElementById('prediction-pin');
-        if (existingPin) {
-          existingPin.remove();
+    console.log('[MapView] Prediction mode changed:', actualPredictionModeActive);
+    
+    // Handle heatmap visibility based on prediction mode
+    try {
+      const currentMap = mapRef.current;
+      
+      if (actualPredictionModeActive) {
+        console.log('[MapView] Activating predictor mode, showing heatmap');
+        
+        // Create or update heatmap source with all projects
+        if (!currentMap.getSource('projects-heatmap')) {
+          console.log('[MapView] Creating heatmap source');
+          currentMap.addSource('projects-heatmap', {
+            type: 'geojson',
+            data: prepareHeatmapData(projects || [])
+          });
+        } else {
+          console.log('[MapView] Updating heatmap source');
+          (currentMap.getSource('projects-heatmap') as mapboxgl.GeoJSONSource)
+            .setData(prepareHeatmapData(projects || []));
         }
-      }
-      
-      if (currentMap.getSource('prediction-radius')) {
-        currentMap.removeLayer('prediction-radius-fill');
-        currentMap.removeLayer('prediction-radius-outline');
-        currentMap.removeSource('prediction-radius');
-      }
-      
-      actualSetPredictionResult(null);
-      return;
-    }
-    
-    // Add click handler for prediction mode
-    const handleMapClick = (e: mapboxgl.MapMouseEvent) => {
-      if (!actualPredictionModeActive || !currentMap) return;
-      
-      // Get clicked coordinates
-      const { lng: clickedLng, lat: clickedLat } = e.lngLat;
-      
-      // Remove existing prediction pin if any
-      const existingPin = document.getElementById('prediction-pin');
-      if (existingPin) {
-        existingPin.remove();
-      }
-      
-      // Create prediction pin element
-      const pinElement = document.createElement('div');
-      pinElement.id = 'prediction-pin';
-      pinElement.className = 'prediction-pin';
-      pinElement.style.width = '30px';
-      pinElement.style.height = '30px';
-      pinElement.style.backgroundImage = 'url(/pin_prediction.svg)';
-      pinElement.style.backgroundSize = 'contain';
-      pinElement.style.backgroundRepeat = 'no-repeat';
-      
-      // Add new prediction pin
-      new mapboxgl.Marker(pinElement)
-        .setLngLat([clickedLng, clickedLat])
-        .addTo(currentMap);
-      
-      // Save pin location to state
-      const newPinLocation: [number, number] = [clickedLng, clickedLat];
-      actualSetPredictionPinLocation(newPinLocation);
-      
-      // Create or update radius circle
-      const radiusInMeters = actualPredictionRadius * 1609.34; // Convert miles to meters
-      const radiusOptions = {
-        steps: 64,
-        units: 'meters' as const
-      };
-      
-      const circleGeoJSON = createGeoJSONCircle([clickedLng, clickedLat], radiusInMeters, radiusOptions);
-      
-      // Add or update the radius source and layers
-      if (currentMap.getSource('prediction-radius')) {
-        const source = currentMap.getSource('prediction-radius') as mapboxgl.GeoJSONSource;
-        source.setData(circleGeoJSON as any);
+        
+        // Create or show heatmap layer
+        if (!currentMap.getLayer('projects-heat')) {
+          console.log('[MapView] Creating heatmap layer');
+          
+          // Find the first symbol layer to place heatmap below
+          let firstSymbolId;
+          const layers = currentMap.getStyle().layers;
+          if (layers) {
+            for (const layer of layers) {
+              if (layer.type === 'symbol') {
+                firstSymbolId = layer.id;
+                break;
+              }
+            }
+          }
+          
+          // Add heatmap layer before first symbol layer
+          currentMap.addLayer({
+            id: 'projects-heat',
+            type: 'heatmap',
+            source: 'projects-heatmap',
+            paint: {
+              'heatmap-color': [
+                'interpolate', ['linear'], ['heatmap-density'],
+                0, 'rgba(0, 0, 255, 0)',
+                0.1, 'rgba(65, 105, 225, 0.5)', // Royal blue
+                0.3, 'rgba(0, 255, 255, 0.7)',  // Cyan
+                0.5, 'rgba(0, 255, 0, 0.7)',    // Green
+                0.7, 'rgba(255, 255, 0, 0.8)',  // Yellow
+                0.9, 'rgba(255, 165, 0, 0.9)',  // Orange
+                1, 'rgba(255, 0, 0, 1)'         // Red
+              ],
+              'heatmap-radius': [
+                'interpolate', ['linear'], ['zoom'],
+                6, 40,
+                10, 60,
+                14, 80
+              ],
+              'heatmap-intensity': [
+                'interpolate', ['linear'], ['zoom'],
+                6, 1,
+                10, 2,
+                14, 3
+              ],
+              'heatmap-weight': [
+                'interpolate', ['linear'], ['get', 'weight'],
+                0.5, 0.5,
+                1.5, 2
+              ],
+              'heatmap-opacity': 0.7
+            }
+          }, firstSymbolId);
+        } else {
+          console.log('[MapView] Setting heatmap visible');
+          currentMap.setLayoutProperty('projects-heat', 'visibility', 'visible');
+          currentMap.setPaintProperty('projects-heat', 'heatmap-opacity', 0.7);
+        }
+        
+        // Update markers to only show unmasked projects
+        projectMarkers.forEach(marker => marker.remove());
+        const unmaskedProjects = projects?.filter(project => !project.isMasked) || [];
+        const newMarkers = createMarkersForProjects(unmaskedProjects);
+        setProjectMarkers(newMarkers);
+        
       } else {
-        currentMap.addSource('prediction-radius', {
-          type: 'geojson',
-          data: circleGeoJSON as any
-        });
+        console.log('[MapView] Deactivating predictor mode, hiding heatmap');
         
-        currentMap.addLayer({
-          id: 'prediction-radius-fill',
-          type: 'fill',
-          source: 'prediction-radius',
-          paint: {
-            'fill-color': '#4285F4',
-            'fill-opacity': 0.2
-          }
-        });
+        // Hide heatmap layer if it exists
+        if (currentMap.getLayer('projects-heat')) {
+          console.log('[MapView] Setting heatmap invisible');
+          currentMap.setLayoutProperty('projects-heat', 'visibility', 'none');
+        }
         
-        currentMap.addLayer({
-          id: 'prediction-radius-outline',
-          type: 'line',
-          source: 'prediction-radius',
-          paint: {
-            'line-color': '#4285F4',
-            'line-width': 2,
-            'line-opacity': 0.7
-          }
-        });
+        // Refresh markers to show all projects (both masked and unmasked)
+        projectMarkers.forEach(marker => marker.remove());
+        const newMarkers = createMarkersForProjects(projects || []);
+        setProjectMarkers(newMarkers);
       }
-      
-      // Calculate prediction
-      calculatePrediction(clickedLat, clickedLng);
-    };
-    
-    // Add click handler
-    currentMap.on('click', handleMapClick);
-    
-    // Cleanup function
-    return () => {
-      currentMap.off('click', handleMapClick);
-    };
-  }, [actualPredictionModeActive, mapLoaded, actualPredictionPinLocation, actualPredictionRadius, projects]);
+    } catch (error) {
+      console.error('[MapView] Error toggling heatmap:', error);
+    }
+  }, [actualPredictionModeActive, projects, mapLoaded]);
 
   // Function to calculate prediction
   const calculatePrediction = useCallback((lat: number, lng: number) => {
@@ -1390,6 +1306,108 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [actualPredictionModeActive]);
 
+  // State for manually toggling heatmap (for debugging)
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  
+  // Function to manually toggle heatmap
+  const toggleHeatmap = () => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    setShowHeatmap(prev => {
+      const newValue = !prev;
+      console.log('[MapView] Manually toggling heatmap:', newValue);
+      
+      try {
+        if (newValue) {
+          // Ensure heatmap source exists
+          if (!mapRef.current.getSource('projects-heatmap')) {
+            console.log('[MapView] Creating heatmap source');
+            mapRef.current.addSource('projects-heatmap', {
+              type: 'geojson',
+              data: prepareHeatmapData(projects || [])
+            });
+          } else {
+            console.log('[MapView] Updating existing heatmap source');
+            (mapRef.current.getSource('projects-heatmap') as mapboxgl.GeoJSONSource)
+              .setData(prepareHeatmapData(projects || []));
+          }
+          
+          // Ensure heatmap layer exists
+          if (!mapRef.current.getLayer('projects-heat')) {
+            console.log('[MapView] Creating heatmap layer');
+            // Find the first symbol layer in the map style
+            // This is typically where labels and place names begin
+            let firstSymbolId;
+            const layers = mapRef.current.getStyle().layers;
+            if (layers) {
+              for (const layer of layers) {
+                if (layer.type === 'symbol') {
+                  firstSymbolId = layer.id;
+                  break;
+                }
+              }
+            }
+            
+            // Add the heatmap layer before the first symbol layer
+            // This ensures it appears below labels and place names
+            mapRef.current.addLayer({
+              id: 'projects-heat',
+              type: 'heatmap',
+              source: 'projects-heatmap',
+              paint: {
+                // More vibrant color ramp from blue to red
+                'heatmap-color': [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0, 'rgba(0, 0, 255, 0)',
+                  0.1, 'rgba(65, 105, 225, 0.5)', // Royal blue
+                  0.3, 'rgba(0, 255, 255, 0.7)',  // Cyan
+                  0.5, 'rgba(0, 255, 0, 0.7)',    // Green
+                  0.7, 'rgba(255, 255, 0, 0.8)',  // Yellow
+                  0.9, 'rgba(255, 165, 0, 0.9)',  // Orange
+                  1, 'rgba(255, 0, 0, 1)'         // Red
+                ],
+                // Even larger radius for better visibility
+                'heatmap-radius': [
+                  'interpolate', ['linear'], ['zoom'],
+                  6, 40,
+                  10, 60,
+                  14, 80
+                ],
+                // Higher intensity for better visibility
+                'heatmap-intensity': [
+                  'interpolate', ['linear'], ['zoom'],
+                  6, 1,
+                  10, 2,
+                  14, 3
+                ],
+                // Use the weight property from the data
+                'heatmap-weight': [
+                  'interpolate', ['linear'], ['get', 'weight'],
+                  0.5, 0.5,
+                  1.5, 2
+                ],
+                // Full opacity
+                'heatmap-opacity': 0.7 // Slightly reduced opacity to let base map show through
+              }
+            }, firstSymbolId); // Insert before the first symbol layer
+          } else {
+            console.log('[MapView] Setting heatmap opacity to 1');
+            mapRef.current.setPaintProperty('projects-heat', 'heatmap-opacity', 0.7);
+          }
+        } else {
+          // Hide heatmap
+          if (mapRef.current.getLayer('projects-heat')) {
+            mapRef.current.setPaintProperty('projects-heat', 'heatmap-opacity', 0);
+          }
+        }
+      } catch (error) {
+        console.error('[MapView] Error toggling heatmap:', error);
+      }
+      
+      return newValue;
+    });
+  };
+
   // Add user controls for map movement
   useEffect(() => {
     // Add a control button to toggle map movement
@@ -1529,7 +1547,7 @@ const MapView: React.FC<MapViewProps> = ({
     markerEl.style.alignItems = 'center';
     markerEl.style.justifyContent = 'center';
     markerEl.style.zIndex = '10';
-    markerEl.innerHTML = '<svg width="14" height="14" fill="#000000" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg>';
+    markerEl.innerHTML = '<svg width="14" height="14" fill="#000000" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>';
     new mapboxgl.Marker(markerEl)
       .setLngLat([selectedUtility.location.lon, selectedUtility.location.lat])
       .addTo(currentMap);
@@ -1549,6 +1567,20 @@ const MapView: React.FC<MapViewProps> = ({
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
+      
+      {/* Heatmap Legend (only shown when heatmap is visible) */}
+      {(showHeatmap || actualPredictionModeActive) && mapLoaded && (
+        <div className="absolute top-24 right-4 bg-gray-900 bg-opacity-80 p-3 rounded-md z-10">
+          <h4 className="text-sm font-medium text-white mb-2">Project Density</h4>
+          <div className="flex items-center space-x-2">
+            <div className="w-full h-4 rounded bg-gradient-to-r from-blue-500 via-green-500 to-red-500"></div>
+          </div>
+          <div className="flex justify-between text-xs text-white mt-1">
+            <span>Low</span>
+            <span>High</span>
+          </div>
+        </div>
+      )}
       
       {/* Project cards at the bottom */}
       {(sortedVisibleProjects.length > 0 || localSelectedProject) && (
