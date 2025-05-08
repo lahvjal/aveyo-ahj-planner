@@ -42,11 +42,17 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   
   // Map projects to entities for the "View on Map" functionality
   const entitiesWithProjects = useMemo(() => {
+    // If currentEntities is not yet loaded, return an empty array
+    if (!currentEntities || currentEntities.length === 0) {
+      return [];
+    }
+    
     const projectMap = new Map<string, Project[]>();
     
     // Group projects by entity ID
     projects.forEach(project => {
-      const entityId = activeTab === 'ahj' ? project.ahj.id : project.utility.id;
+      const entityData = activeTab === 'ahj' ? project.ahj : project.utility;
+      const entityId = entityData?.id;
       if (!entityId) return;
       
       if (projectMap.has(entityId)) {
@@ -63,9 +69,24 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     }));
   }, [projects, currentEntities, activeTab]);
 
+  // Debugging log
+  useEffect(() => {
+    if (entitiesWithProjects) {
+      console.log({
+        loadedCount,
+        isLoading,
+        entitiesLength: entitiesWithProjects.length
+      });
+    }
+  }, [loadedCount, isLoading, entitiesWithProjects]);
+
   // Load more items when scrolling
   useEffect(() => {
-    setVisibleItems(entitiesWithProjects.slice(0, loadedCount));
+    if (entitiesWithProjects && entitiesWithProjects.length > 0) {
+      setVisibleItems(entitiesWithProjects.slice(0, loadedCount));
+    } else {
+      setVisibleItems([]);
+    }
   }, [entitiesWithProjects, loadedCount]);
   
   // Handle scroll event to load more items
@@ -77,7 +98,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       
       // If scrolled near the bottom, load more items
       if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (loadedCount < entitiesWithProjects.length) {
+        if (entitiesWithProjects && loadedCount < entitiesWithProjects.length) {
           // Load more items
           setTimeout(() => {
             setLoadedCount(prev => Math.min(prev + 10, entitiesWithProjects.length));
@@ -96,7 +117,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
         currentContainer.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [loadedCount, isLoading, entities.length]);
+  }, [loadedCount, isLoading, entitiesWithProjects.length]);
   
   // Reset loaded count when entities change
   useEffect(() => {

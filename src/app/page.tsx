@@ -95,7 +95,8 @@ export default function HomePage() {
                   errorMessage = 'The request to get user location timed out';
                   break;
               }
-              console.error(`Error getting user location: ${errorMessage}`);
+              // Use a more discreet log level since this is an expected error
+              console.log(`Notice: ${errorMessage}. Continuing without geolocation.`);
               
               // Continue without geolocation - application should still work
               setUserLocation(null);
@@ -111,7 +112,7 @@ export default function HomePage() {
           setUserLocation(null);
         }
       } catch (err) {
-        console.error('Unexpected error accessing geolocation:', err);
+        console.log('Notice: Unable to access geolocation. Continuing without location features.');
         setUserLocation(null);
       }
     };
