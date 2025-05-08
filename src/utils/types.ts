@@ -60,3 +60,20 @@ export interface ProjectFilter {
   type: 'ahj' | 'utility' | 'financier' | '45day' | 'search' | 'myprojects';
   value: string;
 }
+
+export interface PredictionResult {
+  category: 'High' | 'Medium' | 'Low' | 'Unknown';
+  message: string;
+  nearbyProjects: Project[];
+  ahj: { id: string; name: string; classification: string } | null;
+  utility: { id: string; name: string; classification: string } | null;
+  qualifiedCount: number;
+  totalCount: number;
+  score?: number;
+  scoreDetails?: {
+    qualified45Day: number;
+    ahjClassification: number;
+    utilityClassification: number;
+    distanceWeighted: number;
+  };
+}

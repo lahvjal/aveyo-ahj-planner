@@ -6,9 +6,8 @@ import { useAuth } from '@/utils/AuthContext';
 import { getClassificationMapColor, getClassificationBadgeClass } from '@/utils/classificationColors';
 import { getMapboxToken } from '@/utils/mapbox';
 import { mapQualificationStatus, isQualified } from '@/utils/qualificationStatus';
-
-// Cache for city boundaries to avoid repeated API calls
-const cityBoundaryCache: { [key: string]: any } = {};
+import ImprovedFilterPanel from './ImprovedFilterPanel';
+import ToggleOption from './ToggleOption';
 
 interface MapViewProps {
   ahjs?: AHJ[];
@@ -18,13 +17,6 @@ interface MapViewProps {
   projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
-  predictionModeActive?: boolean;
-  predictionResult?: any;
-  setPredictionResult?: React.Dispatch<React.SetStateAction<any>>;
-  predictionRadius?: number;
-  setPredictionRadius?: React.Dispatch<React.SetStateAction<number>>;
-  predictionPinLocation?: [number, number] | null;
-  setPredictionPinLocation?: React.Dispatch<React.SetStateAction<[number, number] | null>>;
 }
 
 const MapView: React.FC<MapViewProps> = ({
@@ -35,13 +27,6 @@ const MapView: React.FC<MapViewProps> = ({
   projects,
   selectedProject,
   onSelectProject,
-  predictionModeActive = true, // Default to true
-  predictionResult,
-  setPredictionResult,
-  predictionRadius,
-  setPredictionRadius,
-  predictionPinLocation,
-  setPredictionPinLocation
 }) => {
   const { userProfile } = useAuth();
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -52,30 +37,37 @@ const MapView: React.FC<MapViewProps> = ({
   const [lat, setLat] = useState(40.7608);
   const [zoom, setZoom] = useState(9);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
   const [visibleProjects, setVisibleProjects] = useState<Project[]>([]);
-  const [projectMarkers, setProjectMarkers] = useState<mapboxgl.Marker[]>([]);
+  const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
-  const [scrollLeftPos, setScrollLeftPos] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
-  const [showRightArrow, setShowRightArrow] = useState(true);
+  const [showRightArrow, setShowRightArrow] = useState(false);
   const [mapMoved, setMapMoved] = useState(false);
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const cardsToShow = 3; // Number of cards to show at once
-  const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
+  const [showOnlyMyProjects, setShowOnlyMyProjects] = useState(false);
+  const [showKefeProjects, setShowKefeProjects] = useState(false); // New state for "Test" filter
   
-  // Prediction mode state - use props if provided, otherwise use local state
-  const [localPredictionPinLocation, setLocalPredictionPinLocation] = useState<[number, number] | null>(null);
-  
-  // Use the prediction props if provided, otherwise use local state
-  const actualPredictionModeActive = predictionModeActive !== undefined ? predictionModeActive : true;
-  const actualPredictionRadius = predictionRadius !== undefined ? predictionRadius : 5;
-  const actualSetPredictionRadius = setPredictionRadius || ((value: number) => {});
-  const actualPredictionResult = predictionResult !== undefined ? predictionResult : null;
-  const actualSetPredictionResult = setPredictionResult || ((value: any) => {});
-  const actualPredictionPinLocation = predictionPinLocation !== undefined ? predictionPinLocation : localPredictionPinLocation;
-  const actualSetPredictionPinLocation = setPredictionPinLocation || setLocalPredictionPinLocation;
-  
+  // Flag to track if map movements should be allowed
+  const [allowMapMovement, setAllowMapMovement] = useState<{
+    initial: boolean; // Allow initial map setup movement
+    selection: boolean; // Allow movement when selecting a project
+    utility: boolean; // Allow movement when selecting a utility
+  }>({
+    initial: true, // Allow initial setup
+    selection: true, // Allow project selection movement
+    utility: false // Don't move map for utility changes by default
+  });
+
+  // Store map state for view switching
+  const [savedMapState, setSavedMapState] = useState<{
+    center: [number, number];
+    zoom: number;
+    bearing: number;
+    pitch: number;
+  } | null>(null);
+
   // Helper function to create a GeoJSON circle
   const createGeoJSONCircle = (center: [number, number], radiusInMeters: number, options: { steps?: number, units?: 'meters' } = {}) => {
     const steps = options.steps || 64;
@@ -107,71 +99,89 @@ const MapView: React.FC<MapViewProps> = ({
 
   // Function to prepare heatmap data from projects
   const prepareHeatmapData = (projectsData: Project[]) => {
-    // Add weight to each point based on whether it's complete or not
+    console.log('[MapView] Preparing heatmap data for', projectsData.length, 'projects');
+    
+    // Filter out projects with missing coordinates
+    const validProjects = projectsData.filter(project => 
+      typeof project.latitude === 'number' && 
+      typeof project.longitude === 'number'
+    );
+    
+    console.log('[MapView] Found', validProjects.length, 'projects with valid coordinates');
+    
+    // Count 45-day qualified projects
+    const qualified45DayProjects = validProjects.filter(project => 
+      isQualified(project.qualifies45Day)
+    );
+    
+    console.log('[MapView] 45-day qualified projects:', qualified45DayProjects.length);
+    
+    // Create features for the heatmap
     return {
       type: 'FeatureCollection' as const,
-      features: projectsData.map(project => ({
-        type: 'Feature' as const,
-        properties: {
-          id: project.id,
-          isComplete: !project.isMasked,
-          // Add weight property to make points more visible
-          weight: 1.5
-        },
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [project.longitude || 0, project.latitude || 0]
+      features: validProjects.map(project => {
+        // Get classification values
+        const ahjClass = project.ahj?.classification || '';
+        const utilityClass = project.utility?.classification || '';
+        const is45DayQualified = isQualified(project.qualifies45Day);
+        
+        // Base weight calculation - start with a low default weight
+        let baseWeight = 0.1;
+        
+        // Set base weight for 45-day qualified projects
+        if (is45DayQualified) {
+          baseWeight = 1.0;
         }
-      }))
+        
+        // Apply AHJ classification multiplier
+        let ahjMultiplier = 1.0; // Default multiplier
+        if (ahjClass === 'A') {
+          ahjMultiplier = 2.0;
+        } else if (ahjClass === 'B') {
+          ahjMultiplier = 1.5;
+        } else if (ahjClass === 'C') {
+          ahjMultiplier = 1.0;
+        } else {
+          ahjMultiplier = 0.5; // Unknown classification
+        }
+        
+        // Apply Utility classification multiplier
+        let utilityMultiplier = 1.0; // Default multiplier
+        if (utilityClass === 'A') {
+          utilityMultiplier = 2.0;
+        } else if (utilityClass === 'B') {
+          utilityMultiplier = 1.5;
+        } else if (utilityClass === 'C') {
+          utilityMultiplier = 1.0;
+        } else {
+          utilityMultiplier = 0.5; // Unknown classification
+        }
+        
+        // Calculate final weight
+        const finalWeight = baseWeight * ahjMultiplier * utilityMultiplier;
+        
+        // Log high value projects
+        if (finalWeight >= 3.0) {
+          console.log(`[MapView] HIGH VALUE PROJECT: Weight ${finalWeight.toFixed(2)} at [${project.longitude}, ${project.latitude}] (45-day: ${is45DayQualified}, AHJ: ${ahjClass}, Utility: ${utilityClass})`);
+        }
+        
+        return {
+          type: 'Feature' as const,
+          properties: {
+            id: project.id,
+            ahjClass,
+            utilityClass,
+            is45DayQualified,
+            weight: finalWeight
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [project.longitude || 0, project.latitude || 0]
+          }
+        };
+      })
     };
   };
-
-  // Flag to track if map movements should be allowed
-  const [allowMapMovement, setAllowMapMovement] = useState<{
-    initial: boolean; // Allow initial map setup movement
-    selection: boolean; // Allow movement when selecting a project
-    utility: boolean; // Allow movement when selecting a utility
-  }>({
-    initial: true, // Allow initial setup
-    selection: true, // Allow project selection movement
-    utility: false // Don't move map for utility changes by default
-  });
-
-  // Store map state for view switching
-  const [savedMapState, setSavedMapState] = useState<{
-    center: [number, number];
-    zoom: number;
-    bearing: number;
-    pitch: number;
-  } | null>(null);
-
-  // Memoize visible projects to prevent unnecessary re-renders
-  const sortedVisibleProjects = useMemo(() => {
-    return [...visibleProjects].sort((a, b) => {
-      // First, prioritize unmasked projects over masked ones
-      if (!a.isMasked && b.isMasked) return -1;
-      if (a.isMasked && !b.isMasked) return 1;
-      
-      // Within each group (masked or unmasked), prioritize user's own projects
-      const aIsUserProject = a.rep_id && userProfile?.rep_id && a.rep_id === userProfile.rep_id;
-      const bIsUserProject = b.rep_id && userProfile?.rep_id && b.rep_id === userProfile.rep_id;
-      
-      if (aIsUserProject && !bIsUserProject) return -1;
-      if (!aIsUserProject && bIsUserProject) return 1;
-      
-      // Then sort by classification
-      const getClassValue = (project: Project) => {
-        const classification = project.ahj.classification;
-        
-        if (classification === 'A') return 1;
-        if (classification === 'B') return 2;
-        if (classification === 'C') return 3;
-        return 4;
-      };
-      
-      return getClassValue(a) - getClassValue(b);
-    });
-  }, [visibleProjects, userProfile]);
 
   // Effect to initialize map
   useEffect(() => {
@@ -305,6 +315,7 @@ const MapView: React.FC<MapViewProps> = ({
       map.on('error', (e) => {
         console.error('[MapView] Map error:', e);
       });
+      
     };
     
     initializeMap();
@@ -316,134 +327,6 @@ const MapView: React.FC<MapViewProps> = ({
       }
     };
   }, []);
-
-  // Store map state and prediction state when component unmounts (switching to list view)
-  useEffect(() => {
-    return () => {
-      if (mapRef.current) {
-        const center = mapRef.current.getCenter().toArray() as [number, number];
-        const zoom = mapRef.current.getZoom();
-        const bearing = mapRef.current.getBearing();
-        const pitch = mapRef.current.getPitch();
-        
-        // Save the map state to localStorage for persistence
-        const mapState = { center, zoom, bearing, pitch };
-        localStorage.setItem('mapViewState', JSON.stringify(mapState));
-        setSavedMapState(mapState);
-        
-        // Save prediction state
-        if (actualPredictionPinLocation) {
-          localStorage.setItem('predictionPinLocation', JSON.stringify(actualPredictionPinLocation));
-        }
-        
-        if (actualPredictionResult) {
-          localStorage.setItem('predictionResult', JSON.stringify(actualPredictionResult));
-        }
-        
-        localStorage.setItem('predictionRadius', actualPredictionRadius.toString());
-        localStorage.setItem('predictionModeActive', actualPredictionModeActive.toString());
-      }
-    };
-  }, [actualPredictionPinLocation, actualPredictionResult, actualPredictionRadius, actualPredictionModeActive]);
-
-  // Restore map state and prediction state when initializing map
-  useEffect(() => {
-    if (!mapRef.current || !mapLoaded) return;
-    
-    try {
-      // Try to get saved state from localStorage
-      const savedState = localStorage.getItem('mapViewState');
-      
-      if (savedState) {
-        const { center, zoom, bearing, pitch } = JSON.parse(savedState);
-        
-        // Only restore if we have valid coordinates
-        if (center && center.length === 2 && !isNaN(center[0]) && !isNaN(center[1])) {
-          console.log('[MapView] Restoring saved map state:', { center, zoom, bearing, pitch });
-          
-          // Use jumpTo to avoid animation
-          mapRef.current.jumpTo({
-            center,
-            zoom,
-            bearing,
-            pitch
-          });
-          
-          // Disable initial movement since we're restoring a saved state
-          setAllowMapMovement(prev => ({ ...prev, initial: false }));
-        }
-      }
-      
-      // Restore prediction state if in prediction mode
-      if (actualPredictionModeActive) {
-        // Restore prediction pin location
-        const savedPinLocation = localStorage.getItem('predictionPinLocation');
-        if (savedPinLocation && !actualPredictionPinLocation) {
-          const pinLocation = JSON.parse(savedPinLocation) as [number, number];
-          actualSetPredictionPinLocation(pinLocation);
-          
-          // Create prediction pin element
-          const pinElement = document.createElement('div');
-          pinElement.id = 'prediction-pin';
-          pinElement.className = 'prediction-pin';
-          pinElement.style.width = '30px';
-          pinElement.style.height = '30px';
-          pinElement.style.backgroundImage = 'url(/pin_prediction.svg)';
-          pinElement.style.backgroundSize = 'contain';
-          pinElement.style.backgroundRepeat = 'no-repeat';
-          
-          // Add prediction pin
-          new mapboxgl.Marker(pinElement)
-            .setLngLat(pinLocation)
-            .addTo(mapRef.current);
-          
-          // Restore prediction radius circle
-          const radiusInMeters = actualPredictionRadius * 1609.34; // Convert miles to meters
-          const radiusOptions = {
-            steps: 64,
-            units: 'meters' as const
-          };
-          
-          const circleGeoJSON = createGeoJSONCircle(pinLocation, radiusInMeters, radiusOptions);
-          
-          // Add the radius source and layers
-          mapRef.current.addSource('prediction-radius', {
-            type: 'geojson',
-            data: circleGeoJSON as any
-          });
-          
-          mapRef.current.addLayer({
-            id: 'prediction-radius-fill',
-            type: 'fill',
-            source: 'prediction-radius',
-            paint: {
-              'fill-color': '#4285F4',
-              'fill-opacity': 0.2
-            }
-          });
-          
-          mapRef.current.addLayer({
-            id: 'prediction-radius-outline',
-            type: 'line',
-            source: 'prediction-radius',
-            paint: {
-              'line-color': '#4285F4',
-              'line-width': 2,
-              'line-opacity': 0.7
-            }
-          });
-          
-          // Restore prediction result
-          const savedPredictionResult = localStorage.getItem('predictionResult');
-          if (savedPredictionResult && !actualPredictionResult) {
-            actualSetPredictionResult(JSON.parse(savedPredictionResult));
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[MapView] Error restoring map state:', error);
-    }
-  }, [mapLoaded, actualPredictionModeActive, actualPredictionPinLocation, actualPredictionResult]);
 
   // Calculate distance between two points using Haversine formula
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -579,7 +462,7 @@ const MapView: React.FC<MapViewProps> = ({
 
     setIsDragging(true);
     setStartX(e.pageX);
-    setScrollLeftPos(cardListRef.current.scrollLeft);
+    setScrollLeft(cardListRef.current.scrollLeft);
   };
 
   // Handle mouse leave and mouse up
@@ -594,17 +477,17 @@ const MapView: React.FC<MapViewProps> = ({
     e.preventDefault();
     const x = e.pageX;
     const walk = (x - startX) * 2; // Scroll speed multiplier
-    cardListRef.current.scrollLeft = scrollLeftPos - walk;
+    cardListRef.current.scrollLeft = scrollLeft - walk;
   };
 
   // Scroll functions for card list
-  const scrollCardLeft = () => {
+  const scrollCardListLeft = () => {
     if (cardListRef.current) {
       cardListRef.current.scrollBy({ left: -300, behavior: 'smooth' });
     }
   };
 
-  const scrollCardRight = () => {
+  const scrollCardListRight = () => {
     if (cardListRef.current) {
       cardListRef.current.scrollBy({ left: 300, behavior: 'smooth' });
     }
@@ -625,7 +508,7 @@ const MapView: React.FC<MapViewProps> = ({
 
   // Handle card navigation
   const handleNextCard = () => {
-    if (currentCardIndex < visibleProjects.length - cardsToShow) {
+    if (currentCardIndex < visibleProjects.length - 3) {
       setCurrentCardIndex(currentCardIndex + 1);
     }
   };
@@ -683,14 +566,15 @@ const MapView: React.FC<MapViewProps> = ({
   const createMarkersForProjects = (projectsToShow: Project[]) => {
     if (!mapRef.current) return [];
     
-    return projectsToShow
+    const markers = projectsToShow
       .map(project => {
-        if (!project.latitude || !project.longitude) return null;
+        // Skip projects without coordinates
+        if (typeof project.latitude !== 'number' || typeof project.longitude !== 'number') return null;
         
         // Get pin color based on AHJ classification
         let pinImage = '/pin_grey.svg';
         
-        if (project.ahj.classification) {
+        if (project.ahj?.classification) {
           if (project.ahj.classification === 'A') {
             pinImage = '/pin_green_active.svg';
           } else if (project.ahj.classification === 'B') {
@@ -704,7 +588,8 @@ const MapView: React.FC<MapViewProps> = ({
         
         // Create marker element
         const el = document.createElement('div');
-        el.className = 'marker';
+        el.className = 'marker project-pin'; // Add project-pin class for easy selection
+        el.setAttribute('data-pin-type', 'project'); // Add data attribute for better identification
         el.style.backgroundImage = `url(${pinImage})`;
         el.style.width = '30px';
         el.style.height = '30px';
@@ -720,8 +605,8 @@ const MapView: React.FC<MapViewProps> = ({
         }).setHTML(`
           <div class="p-2">
             <h3 class="text-sm font-semibold">${project.address}</h3>
-            <p class="text-xs">AHJ: ${project.ahj.name}</p>
-            <p class="text-xs">Status: ${project.status}</p>
+            <p class="text-xs">AHJ: ${project.ahj?.name || 'Unknown'}</p>
+            <p class="text-xs">Status: ${project.status || 'Unknown'}</p>
           </div>
         `);
         
@@ -739,6 +624,9 @@ const MapView: React.FC<MapViewProps> = ({
         return marker;
       })
       .filter(Boolean) as mapboxgl.Marker[];
+    
+    // Store markers for later reference
+    return markers;
   };
 
   // Add project markers to map
@@ -748,294 +636,15 @@ const MapView: React.FC<MapViewProps> = ({
     console.log('[MapView] Adding markers for', projects?.length || 0, 'projects');
     
     // Clear existing markers
-    projectMarkers.forEach(marker => marker.remove());
+    markersRef.current.forEach(marker => marker.remove());
     
-    // Only create markers for unmasked projects
-    const newMarkers = createMarkersForProjects(projects?.filter(project => !project.isMasked) || []);
-    setProjectMarkers(newMarkers);
-  }, [projects, mapLoaded, actualPredictionModeActive]);
+    const unmaskedProjects = projects?.filter(project => !project.isMasked) || [];
+    console.log('[MapView] Showing', unmaskedProjects.length, 'unmasked project pins');
+    
+    const newMarkers = createMarkersForProjects(unmaskedProjects);
+    markersRef.current = newMarkers;
+  }, [projects, mapLoaded]);
 
-  // Effect to handle prediction mode changes
-  useEffect(() => {
-    if (!mapRef.current || !mapLoaded) return;
-    
-    console.log('[MapView] Prediction mode changed:', actualPredictionModeActive);
-    
-    // Handle heatmap visibility based on prediction mode
-    try {
-      const currentMap = mapRef.current;
-      
-      if (actualPredictionModeActive) {
-        console.log('[MapView] Activating predictor mode, showing heatmap');
-        
-        // Create or update heatmap source with all projects
-        if (!currentMap.getSource('projects-heatmap')) {
-          console.log('[MapView] Creating heatmap source');
-          currentMap.addSource('projects-heatmap', {
-            type: 'geojson',
-            data: prepareHeatmapData(projects || [])
-          });
-        } else {
-          console.log('[MapView] Updating heatmap source');
-          (currentMap.getSource('projects-heatmap') as mapboxgl.GeoJSONSource)
-            .setData(prepareHeatmapData(projects || []));
-        }
-        
-        // Create or show heatmap layer
-        if (!currentMap.getLayer('projects-heat')) {
-          console.log('[MapView] Creating heatmap layer');
-          
-          // Find the first symbol layer to place heatmap below
-          let firstSymbolId;
-          const layers = currentMap.getStyle().layers;
-          if (layers) {
-            for (const layer of layers) {
-              if (layer.type === 'symbol') {
-                firstSymbolId = layer.id;
-                break;
-              }
-            }
-          }
-          
-          // Add heatmap layer before first symbol layer
-          currentMap.addLayer({
-            id: 'projects-heat',
-            type: 'heatmap',
-            source: 'projects-heatmap',
-            paint: {
-              'heatmap-color': [
-                'interpolate', ['linear'], ['heatmap-density'],
-                0, 'rgba(0, 0, 255, 0)',
-                0.1, 'rgba(65, 105, 225, 0.5)', // Royal blue
-                0.3, 'rgba(0, 255, 255, 0.7)',  // Cyan
-                0.5, 'rgba(0, 255, 0, 0.7)',    // Green
-                0.7, 'rgba(255, 255, 0, 0.8)',  // Yellow
-                0.9, 'rgba(255, 165, 0, 0.9)',  // Orange
-                1, 'rgba(255, 0, 0, 1)'         // Red
-              ],
-              'heatmap-radius': [
-                'interpolate', ['linear'], ['zoom'],
-                6, 40,
-                10, 60,
-                14, 80
-              ],
-              'heatmap-intensity': [
-                'interpolate', ['linear'], ['zoom'],
-                6, 1,
-                10, 2,
-                14, 3
-              ],
-              'heatmap-weight': [
-                'interpolate', ['linear'], ['get', 'weight'],
-                0.5, 0.5,
-                1.5, 2
-              ],
-              'heatmap-opacity': 0.7
-            }
-          }, firstSymbolId);
-        } else {
-          console.log('[MapView] Setting heatmap visible');
-          currentMap.setLayoutProperty('projects-heat', 'visibility', 'visible');
-          currentMap.setPaintProperty('projects-heat', 'heatmap-opacity', 0.7);
-        }
-        
-        // Update markers to only show unmasked projects
-        projectMarkers.forEach(marker => marker.remove());
-        const unmaskedProjects = projects?.filter(project => !project.isMasked) || [];
-        const newMarkers = createMarkersForProjects(unmaskedProjects);
-        setProjectMarkers(newMarkers);
-        
-      } else {
-        console.log('[MapView] Deactivating predictor mode, hiding heatmap');
-        
-        // Hide heatmap layer if it exists
-        if (currentMap.getLayer('projects-heat')) {
-          console.log('[MapView] Setting heatmap invisible');
-          currentMap.setLayoutProperty('projects-heat', 'visibility', 'none');
-        }
-        
-        // Refresh markers to show all projects (both masked and unmasked)
-        projectMarkers.forEach(marker => marker.remove());
-        const newMarkers = createMarkersForProjects(projects || []);
-        setProjectMarkers(newMarkers);
-      }
-    } catch (error) {
-      console.error('[MapView] Error toggling heatmap:', error);
-    }
-  }, [actualPredictionModeActive, projects, mapLoaded]);
-
-  // Function to calculate prediction
-  const calculatePrediction = useCallback((lat: number, lng: number) => {
-    if (!projects || projects.length === 0) {
-      actualSetPredictionResult({
-        probability: 0,
-        nearbyProjects: [],
-        ahj: null,
-        utility: null,
-        financier: null,
-        qualifiedCount: 0,
-        totalCount: 0
-      });
-      return;
-    }
-    
-    // Find nearby projects within radius
-    const nearbyProjects = findProjectsInRadius(lat, lng, actualPredictionRadius, projects);
-    
-    if (nearbyProjects.length === 0) {
-      actualSetPredictionResult({
-        probability: 0,
-        nearbyProjects: [],
-        ahj: null,
-        utility: null,
-        financier: null,
-        qualifiedCount: 0,
-        totalCount: 0
-      });
-      return;
-    }
-    
-    // Determine likely AHJ, utility, and financier based on nearby projects
-    const servicingEntities = determineServicingEntitiesByMajority(nearbyProjects);
-    
-    // Calculate distances for each project
-    const projectsWithDistance = nearbyProjects.map(project => {
-      const distance = calculateHaversineDistance(
-        lat, lng, 
-        project.latitude || 0, project.longitude || 0
-      );
-      return { 
-        project, 
-        distance,
-        isQualified: isQualified(project.qualifies45Day)
-      };
-    });
-    
-    // Sort by distance
-    projectsWithDistance.sort((a, b) => a.distance - b.distance);
-    
-    // Log for debugging
-    console.log("Projects with distance:", JSON.stringify(projectsWithDistance.map(p => ({
-      address: p.project.address,
-      distance: p.distance.toFixed(2) + " km",
-      isQualified: p.isQualified
-    })), null, 2));
-    
-    // Count qualified projects
-    const qualifiedProjects = nearbyProjects.filter(project => 
-      isQualified(project.qualifies45Day)
-    );
-    
-    // Calculate probability based on:
-    // 1. Percentage of nearby qualified projects
-    // 2. Classifications of AHJ, utility, and financier
-    // 3. Distance-weighted qualification rate (closer projects have more influence)
-    
-    // Base probability from nearby project qualification rate
-    const baseProbability = (qualifiedProjects.length / nearbyProjects.length) * 100;
-    console.log("Base probability:", baseProbability.toFixed(2) + "%");
-    
-    let probability = baseProbability;
-    
-    // Apply distance weighting to the probability calculation
-    if (projectsWithDistance.length > 0) {
-      // Maximum radius in km
-      const maxRadius = actualPredictionRadius * 1.60934;
-      
-      // Calculate distance-weighted qualification rate
-      let weightedQualifiedSum = 0;
-      let weightSum = 0;
-      
-      // Log individual project weights
-      const projectWeights: Array<{
-        address: string;
-        distance: string;
-        weight: string;
-        isQualified: boolean;
-      }> = [];
-      
-      projectsWithDistance.forEach(({ project, distance, isQualified }) => {
-        // Weight is inversely proportional to distance (closer = higher weight)
-        // Projects at the edge of the radius have 10% of the weight of those at the center
-        // Use a more aggressive curve to emphasize nearby projects
-        const weight = Math.pow(1 - (distance / maxRadius), 2);
-        
-        // Add to weighted sums
-        if (isQualified) {
-          weightedQualifiedSum += weight;
-        }
-        weightSum += weight;
-        
-        // Log for debugging
-        projectWeights.push({
-          address: project.address,
-          distance: distance.toFixed(2) + " km",
-          weight: weight.toFixed(3),
-          isQualified
-        });
-      });
-      
-      console.log("Project weights:", JSON.stringify(projectWeights, null, 2));
-      
-      // Calculate weighted probability if we have valid weights
-      if (weightSum > 0) {
-        const weightedProbability = (weightedQualifiedSum / weightSum) * 100;
-        console.log("Weighted probability:", weightedProbability.toFixed(2) + "%");
-        
-        // Blend the original probability with the weighted probability
-        // Give the weighted probability more influence (80%)
-        probability = baseProbability * 0.2 + weightedProbability * 0.8;
-        console.log("Blended probability:", probability.toFixed(2) + "%");
-      }
-    }
-    
-    // Adjust probability based on entity classifications
-    const classificationBonus = {
-      'A': 20, // A classification adds 20% to probability
-      'B': 0,  // B classification is neutral
-      'C': -20 // C classification subtracts 20% from probability
-    };
-    
-    let classificationAdjustment = 0;
-    
-    // Apply classification adjustments if entities are found
-    if (servicingEntities.ahj && servicingEntities.ahj.classification) {
-      const adjustment = classificationBonus[servicingEntities.ahj.classification as 'A' | 'B' | 'C'] || 0;
-      classificationAdjustment += adjustment;
-      console.log(`AHJ ${servicingEntities.ahj.classification} adjustment: ${adjustment}%`);
-    }
-    
-    if (servicingEntities.utility && servicingEntities.utility.classification) {
-      const adjustment = classificationBonus[servicingEntities.utility.classification as 'A' | 'B' | 'C'] || 0;
-      classificationAdjustment += adjustment;
-      console.log(`Utility ${servicingEntities.utility.classification} adjustment: ${adjustment}%`);
-    }
-    
-    if (servicingEntities.financier && servicingEntities.financier.classification) {
-      const adjustment = classificationBonus[servicingEntities.financier.classification as 'A' | 'B' | 'C'] || 0;
-      classificationAdjustment += adjustment;
-      console.log(`Financier ${servicingEntities.financier.classification} adjustment: ${adjustment}%`);
-    }
-    
-    probability += classificationAdjustment;
-    console.log(`After classification adjustments: ${probability.toFixed(2)}%`);
-    
-    // Ensure probability is between 0 and 100
-    probability = Math.max(0, Math.min(100, probability));
-    console.log(`Final probability: ${probability.toFixed(2)}%`);
-    
-    // Set prediction result
-    actualSetPredictionResult({
-      probability: Math.round(probability),
-      nearbyProjects,
-      ahj: servicingEntities.ahj,
-      utility: servicingEntities.utility,
-      financier: servicingEntities.financier,
-      qualifiedCount: qualifiedProjects.length,
-      totalCount: nearbyProjects.length
-    });
-  }, [actualPredictionRadius, projects, actualSetPredictionResult]);
-  
   // Function to find projects within radius
   const findProjectsInRadius = (
     pinLat: number, 
@@ -1052,7 +661,7 @@ const MapView: React.FC<MapViewProps> = ({
       // Calculate distance using Haversine formula
       const distance = calculateHaversineDistance(
         pinLat, pinLng, 
-        project.latitude, project.longitude
+        project.latitude || 0, project.longitude || 0
       );
       
       // Return projects within the radius
@@ -1084,12 +693,10 @@ const MapView: React.FC<MapViewProps> = ({
   ): { 
     ahj: { id: string; name: string; classification: string } | null;
     utility: { id: string; name: string; classification: string } | null;
-    financier: { id: string; name: string; classification: string } | null;
   } => {
     // Count occurrences
     const ahjCounts: Record<string, { count: number; name: string; classification: string }> = {};
     const utilityCounts: Record<string, { count: number; name: string; classification: string }> = {};
-    const financierCounts: Record<string, { count: number; name: string; classification: string }> = {};
     
     nearbyProjects.forEach(project => {
       // Count AHJs
@@ -1115,55 +722,34 @@ const MapView: React.FC<MapViewProps> = ({
         }
         utilityCounts[project.utility.id].count++;
       }
-      
-      // Count financiers
-      if (project.financier?.id) {
-        if (!financierCounts[project.financier.id]) {
-          financierCounts[project.financier.id] = { 
-            count: 0, 
-            name: project.financier.name || 'Unknown',
-            classification: project.financier.classification || 'B'
-          };
-        }
-        financierCounts[project.financier.id].count++;
+    });
+    
+    // Find the most common entities
+    let topAHJ = null;
+    let topUtility = null;
+    let maxAHJCount = 0;
+    let maxUtilityCount = 0;
+    
+    // Find top AHJ
+    Object.entries(ahjCounts).forEach(([id, data]) => {
+      if (data.count > maxAHJCount) {
+        maxAHJCount = data.count;
+        topAHJ = { id, name: data.name, classification: data.classification };
       }
     });
     
-    // Find most common entities
-    const findMostCommon = (
-      counts: Record<string, { count: number; name: string; classification: string }>
-    ): { id: string; name: string; classification: string } | null => {
-      let maxCount = 0;
-      let mostCommon = null;
-      
-      Object.entries(counts).forEach(([id, data]) => {
-        if (data.count > maxCount) {
-          maxCount = data.count;
-          mostCommon = { id, name: data.name, classification: data.classification };
-        }
-      });
-      
-      return mostCommon;
-    };
+    // Find top utility
+    Object.entries(utilityCounts).forEach(([id, data]) => {
+      if (data.count > maxUtilityCount) {
+        maxUtilityCount = data.count;
+        topUtility = { id, name: data.name, classification: data.classification };
+      }
+    });
     
     return {
-      ahj: findMostCommon(ahjCounts),
-      utility: findMostCommon(utilityCounts),
-      financier: findMostCommon(financierCounts)
+      ahj: topAHJ,
+      utility: topUtility
     };
-  };
-
-  // Scroll functions for the card list
-  const scrollLeft = () => {
-    if (cardListRef.current) {
-      cardListRef.current.scrollBy({ left: -300, behavior: 'smooth' });
-    }
-  };
-
-  const scrollRight = () => {
-    if (cardListRef.current) {
-      cardListRef.current.scrollBy({ left: 300, behavior: 'smooth' });
-    }
   };
 
   // Mouse event handlers for dragging
@@ -1207,7 +793,7 @@ const MapView: React.FC<MapViewProps> = ({
                   title="Assigned to you"
                 />
               )}
-              <h3 className={`text-sm font-semibold truncate w-60 ${project.isMasked ? 'text-neutral-500' : ''}`}>{project.address}</h3>
+              <h3 className={`text-sm font-semibold truncate w-60 ${project.isMasked ? 'text-neutral-500' : ''}`}>{project.address || 'Unnamed'}</h3>
             </div>
             <div className="flex items-center gap-1">
               {isQualified(project.qualifies45Day) && (
@@ -1249,7 +835,6 @@ const MapView: React.FC<MapViewProps> = ({
   const [filters, setFilters] = useState<ProjectFilter[]>([]);
   const [searchTerms, setSearchTerms] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
-  const [showOnlyMyProjects, setShowOnlyMyProjects] = useState(false);
 
   const handleSearch = (terms: string[]) => {
     setSearchTerms(terms);
@@ -1261,6 +846,10 @@ const MapView: React.FC<MapViewProps> = ({
 
   const toggleShowOnlyMyProjects = () => {
     setShowOnlyMyProjects(!showOnlyMyProjects);
+  };
+
+  const toggleShowKefeProjects = () => {
+    setShowKefeProjects(!showKefeProjects);
   };
 
   const addFilter = (filter: ProjectFilter) => {
@@ -1275,312 +864,49 @@ const MapView: React.FC<MapViewProps> = ({
     setFilters([]);
   };
 
-  const togglePredictionMode = () => {
-    const newMode = !actualPredictionModeActive;
-    actualSetPredictionRadius(newMode ? 5 : actualPredictionRadius);
-    
-    // Clear prediction results when turning off prediction mode
-    if (!newMode) {
-      actualSetPredictionResult(null);
+  // Memoize visible projects to prevent unnecessary re-renders
+  const sortedVisibleProjects = useMemo(() => {
+    return [...visibleProjects].sort((a, b) => {
+      // First, prioritize unmasked projects over masked ones
+      if (!a.isMasked && b.isMasked) return -1;
+      if (a.isMasked && !b.isMasked) return 1;
       
-      // Remove prediction pin and circle
-      const existingPin = document.getElementById('prediction-pin');
-      if (existingPin) {
-        existingPin.remove();
-      }
+      // Within each group (masked or unmasked), prioritize user's own projects
+      const aIsUserProject = a.rep_id && userProfile?.rep_id && a.rep_id === userProfile.rep_id;
+      const bIsUserProject = b.rep_id && userProfile?.rep_id && b.rep_id === userProfile.rep_id;
       
-      if (mapRef.current && mapRef.current.getSource('prediction-radius')) {
-        mapRef.current.removeLayer('prediction-radius-fill');
-        mapRef.current.removeLayer('prediction-radius-outline');
-        mapRef.current.removeSource('prediction-radius');
-      }
-    }
-  };
-
-  useEffect(() => {
-    // When prediction mode is activated, we don't want to zoom to the selected project
-    // This flag will be used in the project selection effect
-    if (actualPredictionModeActive) {
-      // Clear local selection without triggering a zoom
-      setLocalSelectedProject(null);
-    }
-  }, [actualPredictionModeActive]);
-
-  // State for manually toggling heatmap (for debugging)
-  const [showHeatmap, setShowHeatmap] = useState(false);
-  
-  // Function to manually toggle heatmap
-  const toggleHeatmap = () => {
-    if (!mapRef.current || !mapLoaded) return;
-    
-    setShowHeatmap(prev => {
-      const newValue = !prev;
-      console.log('[MapView] Manually toggling heatmap:', newValue);
+      if (aIsUserProject && !bIsUserProject) return -1;
+      if (!aIsUserProject && bIsUserProject) return 1;
       
-      try {
-        if (newValue) {
-          // Ensure heatmap source exists
-          if (!mapRef.current.getSource('projects-heatmap')) {
-            console.log('[MapView] Creating heatmap source');
-            mapRef.current.addSource('projects-heatmap', {
-              type: 'geojson',
-              data: prepareHeatmapData(projects || [])
-            });
-          } else {
-            console.log('[MapView] Updating existing heatmap source');
-            (mapRef.current.getSource('projects-heatmap') as mapboxgl.GeoJSONSource)
-              .setData(prepareHeatmapData(projects || []));
-          }
-          
-          // Ensure heatmap layer exists
-          if (!mapRef.current.getLayer('projects-heat')) {
-            console.log('[MapView] Creating heatmap layer');
-            // Find the first symbol layer in the map style
-            // This is typically where labels and place names begin
-            let firstSymbolId;
-            const layers = mapRef.current.getStyle().layers;
-            if (layers) {
-              for (const layer of layers) {
-                if (layer.type === 'symbol') {
-                  firstSymbolId = layer.id;
-                  break;
-                }
-              }
-            }
-            
-            // Add the heatmap layer before the first symbol layer
-            // This ensures it appears below labels and place names
-            mapRef.current.addLayer({
-              id: 'projects-heat',
-              type: 'heatmap',
-              source: 'projects-heatmap',
-              paint: {
-                // More vibrant color ramp from blue to red
-                'heatmap-color': [
-                  'interpolate', ['linear'], ['heatmap-density'],
-                  0, 'rgba(0, 0, 255, 0)',
-                  0.1, 'rgba(65, 105, 225, 0.5)', // Royal blue
-                  0.3, 'rgba(0, 255, 255, 0.7)',  // Cyan
-                  0.5, 'rgba(0, 255, 0, 0.7)',    // Green
-                  0.7, 'rgba(255, 255, 0, 0.8)',  // Yellow
-                  0.9, 'rgba(255, 165, 0, 0.9)',  // Orange
-                  1, 'rgba(255, 0, 0, 1)'         // Red
-                ],
-                // Even larger radius for better visibility
-                'heatmap-radius': [
-                  'interpolate', ['linear'], ['zoom'],
-                  6, 40,
-                  10, 60,
-                  14, 80
-                ],
-                // Higher intensity for better visibility
-                'heatmap-intensity': [
-                  'interpolate', ['linear'], ['zoom'],
-                  6, 1,
-                  10, 2,
-                  14, 3
-                ],
-                // Use the weight property from the data
-                'heatmap-weight': [
-                  'interpolate', ['linear'], ['get', 'weight'],
-                  0.5, 0.5,
-                  1.5, 2
-                ],
-                // Full opacity
-                'heatmap-opacity': 0.7 // Slightly reduced opacity to let base map show through
-              }
-            }, firstSymbolId); // Insert before the first symbol layer
-          } else {
-            console.log('[MapView] Setting heatmap opacity to 1');
-            mapRef.current.setPaintProperty('projects-heat', 'heatmap-opacity', 0.7);
-          }
-        } else {
-          // Hide heatmap
-          if (mapRef.current.getLayer('projects-heat')) {
-            mapRef.current.setPaintProperty('projects-heat', 'heatmap-opacity', 0);
-          }
-        }
-      } catch (error) {
-        console.error('[MapView] Error toggling heatmap:', error);
-      }
+      // Then sort by classification
+      const getClassValue = (project: Project) => {
+        const classification = project.ahj?.classification;
+        
+        if (classification === 'A') return 1;
+        if (classification === 'B') return 2;
+        if (classification === 'C') return 3;
+        return 4;
+      };
       
-      return newValue;
+      return getClassValue(a) - getClassValue(b);
     });
-  };
-
-  // Add user controls for map movement
-  useEffect(() => {
-    // Add a control button to toggle map movement
-    if (mapRef.current && mapLoaded) {
-      const container = document.createElement('div');
-      container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-      container.style.backgroundColor = '#333';
-      container.style.color = 'white';
-      
-      const button = document.createElement('button');
-      button.className = 'map-movement-toggle';
-      button.innerHTML = allowMapMovement.selection ? '🔒' : '🔓';
-      button.title = allowMapMovement.selection ? 'Lock Map Position' : 'Allow Map Movement';
-      button.style.padding = '5px 10px';
-      button.style.fontSize = '16px';
-      button.style.cursor = 'pointer';
-      button.style.border = 'none';
-      button.style.backgroundColor = 'transparent';
-      button.style.color = 'white';
-      
-      button.addEventListener('click', () => {
-        setAllowMapMovement(prev => {
-          const newState = {
-            ...prev,
-            selection: !prev.selection,
-            utility: !prev.selection
-          };
-          button.innerHTML = newState.selection ? '🔒' : '🔓';
-          button.title = newState.selection ? 'Lock Map Position' : 'Allow Map Movement';
-          return newState;
-        });
-      });
-      
-      container.appendChild(button);
-      
-      // Add the custom control to the map
-      mapRef.current.addControl({
-        onAdd: () => container,
-        onRemove: () => {}
-      }, 'top-right');
-    }
-  }, [mapLoaded, allowMapMovement.selection]);
-
-  // Utility Overlay Effect
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    console.log('[MapView] selectedUtility:', selectedUtility, 'mapLoaded:', mapLoaded);
-    if (!currentMap || !mapLoaded) return;
-
-    // Clean up previous utility layers and marker
-    if (currentMap.getLayer('utility-boundary-fill')) {
-      currentMap.removeLayer('utility-boundary-fill');
-      console.log('[MapView] Removed previous utility-boundary-fill layer');
-    }
-    if (currentMap.getLayer('utility-boundary-line')) {
-      currentMap.removeLayer('utility-boundary-line');
-      console.log('[MapView] Removed previous utility-boundary-line layer');
-    }
-    if (currentMap.getSource('utility-boundary')) {
-      currentMap.removeSource('utility-boundary');
-      console.log('[MapView] Removed previous utility-boundary source');
-    }
-    const prevMarker = document.getElementById('utility-marker');
-    if (prevMarker) {
-      prevMarker.remove();
-      console.log('[MapView] Removed previous utility marker');
-    }
-
-    if (!selectedUtility) {
-      console.log('[MapView] No selectedUtility, skipping overlay');
-      return;
-    }
-
-    // Fetch and add the utility GeoJSON
-    fetch(selectedUtility.geojson)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch utility geojson: ' + selectedUtility.geojson);
-        return res.json();
-      })
-      .then(geojson => {
-        console.log('[MapView] Loaded geojson for utility:', geojson);
-        currentMap.addSource('utility-boundary', {
-          type: 'geojson',
-          data: geojson
-        });
-        currentMap.addLayer({
-          id: 'utility-boundary-fill',
-          type: 'fill',
-          source: 'utility-boundary',
-          paint: {
-            'fill-color': '#000000',  // Black
-            'fill-opacity': 0.3
-          }
-        });
-        currentMap.addLayer({
-          id: 'utility-boundary-line',
-          type: 'line',
-          source: 'utility-boundary',
-          paint: {
-            'line-color': '#000000',  // Black
-            'line-width': 3,
-            'line-opacity': 0.8
-          }
-        });
-        // Zoom to utility boundary - only if user initiated
-        const bounds = new mapboxgl.LngLatBounds();
-        
-        // Add each project's coordinates to the bounds
-        geojson.features.forEach((feature: any) => {
-          if (feature.geometry.type === 'Polygon') {
-            feature.geometry.coordinates[0].forEach((coord: [number, number]) => {
-              bounds.extend(coord as [number, number]);
-            });
-          }
-        });
-        
-        if (!bounds.isEmpty() && allowMapMovement.utility) {
-          console.log('[MapView] Fitting map to utility bounds:', bounds);
-          currentMap.fitBounds(bounds, { padding: 50 });
-        }
-      })
-      .catch(err => {
-        console.error('[MapView] Error loading utility geojson:', err);
-      });
-
-    // Add utility marker
-    const markerEl = document.createElement('div');
-    markerEl.id = 'utility-marker';
-    markerEl.style.width = '28px';
-    markerEl.style.height = '28px';
-    markerEl.style.backgroundColor = '#FFFFFF';  // White
-    markerEl.style.border = '3px solid #000000';  // Black
-    markerEl.style.borderRadius = '50%';
-    markerEl.style.boxShadow = '0 0 10px 2px #000000';  // Black
-    markerEl.title = selectedUtility.name;
-    markerEl.style.display = 'flex';
-    markerEl.style.alignItems = 'center';
-    markerEl.style.justifyContent = 'center';
-    markerEl.style.zIndex = '10';
-    markerEl.innerHTML = '<svg width="14" height="14" fill="#000000" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>';
-    new mapboxgl.Marker(markerEl)
-      .setLngLat([selectedUtility.location.lon, selectedUtility.location.lat])
-      .addTo(currentMap);
-    console.log('[MapView] Added utility marker at', selectedUtility.location.lon, selectedUtility.location.lat);
-
-    // Optionally fly to marker if no boundary - only if user initiated
-    if (!selectedUtility.geojson && allowMapMovement.utility) {
-      currentMap.flyTo({
-        center: [selectedUtility.location.lon, selectedUtility.location.lat],
-        zoom: 12,
-        essential: true
-      });
-      console.log('[MapView] Fly to utility marker');
-    }
-  }, [selectedUtility, mapLoaded]);
+  }, [visibleProjects, userProfile]);
 
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
       
-      {/* Heatmap Legend (only shown when heatmap is visible) */}
-      {(showHeatmap || actualPredictionModeActive) && mapLoaded && (
-        <div className="absolute top-24 right-4 bg-gray-900 bg-opacity-80 p-3 rounded-md z-10">
-          <h4 className="text-sm font-medium text-white mb-2">Project Density</h4>
-          <div className="flex items-center space-x-2">
-            <div className="w-full h-4 rounded bg-gradient-to-r from-blue-500 via-green-500 to-red-500"></div>
-          </div>
-          <div className="flex justify-between text-xs text-white mt-1">
-            <span>Low</span>
-            <span>High</span>
-          </div>
-        </div>
-      )}
+      {/* Improved Filter Panel */}
+      <ImprovedFilterPanel
+        filters={[]} // Pass empty filters array or implement filters logic
+        addFilter={() => {}} // Implement filter adding logic
+        removeFilter={() => {}} // Implement filter removing logic
+        clearFilters={() => {}} // Implement clear filters logic
+        viewMode="map"
+        onViewModeChange={() => {}} // This is handled internally in MapView
+        showOnlyMyProjects={showOnlyMyProjects}
+        toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
+      />
       
       {/* Project cards at the bottom */}
       {(sortedVisibleProjects.length > 0 || localSelectedProject) && (
@@ -1589,7 +915,7 @@ const MapView: React.FC<MapViewProps> = ({
           {showLeftArrow && (
             <button
               className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
-              onClick={scrollCardLeft}
+              onClick={scrollCardListLeft}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -1601,7 +927,7 @@ const MapView: React.FC<MapViewProps> = ({
           {showRightArrow && (
             <button
               className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
-              onClick={scrollCardRight}
+              onClick={scrollCardListRight}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
