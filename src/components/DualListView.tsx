@@ -32,10 +32,11 @@ const DualListView: React.FC<DualListViewProps> = ({
   const [activeView, setActiveView] = useState<'list' | 'entities'>('list');
   const [myProjects, setMyProjects] = useState<Project[]>([]);
 
+  // Get auth context
+  const { user, userProfile } = useAuth();
+  
   // Filter projects to get "my projects" based on the user's rep_id
   useEffect(() => {
-    const { user, userProfile } = useAuth();
-    
     // Always filter to only show the user's projects in the My Projects view
     // This uses the rep_id field to identify the user's projects
     if (userProfile?.rep_id) {
@@ -49,7 +50,7 @@ const DualListView: React.FC<DualListViewProps> = ({
       setMyProjects([]);
       console.log('No rep_id available, showing no projects in My Projects view');
     }
-  }, [projects]);
+  }, [projects, userProfile]);
 
   // Handle entity view on map
   const handleEntityViewOnMap = (entityName: string, entityType: 'ahj' | 'utility') => {

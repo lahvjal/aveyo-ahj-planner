@@ -69,19 +69,55 @@ export default function HomePage() {
 
   // Get user location
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude
-          });
-        },
-        (error) => {
-          console.error('Error getting user location:', error);
+    // Define a function to safely get the user's location
+    const getUserLocation = () => {
+      try {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              setUserLocation({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude
+              });
+              console.log('User location obtained successfully');
+            },
+            (error) => {
+              // Handle specific geolocation errors
+              let errorMessage = 'Unknown error';
+              switch(error.code) {
+                case error.PERMISSION_DENIED:
+                  errorMessage = 'User denied the request for geolocation';
+                  break;
+                case error.POSITION_UNAVAILABLE:
+                  errorMessage = 'Location information is unavailable';
+                  break;
+                case error.TIMEOUT:
+                  errorMessage = 'The request to get user location timed out';
+                  break;
+              }
+              console.error(`Error getting user location: ${errorMessage}`);
+              
+              // Continue without geolocation - application should still work
+              setUserLocation(null);
+            },
+            { 
+              timeout: 10000,         // 10 second timeout
+              maximumAge: 60000,     // Accept cached positions up to 1 minute old
+              enableHighAccuracy: false  // Don't need high accuracy, saves battery
+            }
+          );
+        } else {
+          console.log('Geolocation is not supported by this browser');
+          setUserLocation(null);
         }
-      );
-    }
+      } catch (err) {
+        console.error('Unexpected error accessing geolocation:', err);
+        setUserLocation(null);
+      }
+    };
+    
+    // Call the function
+    getUserLocation();
   }, []);
 
   // Handle sorting
