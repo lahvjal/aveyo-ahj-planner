@@ -1,14 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import { useEntities, EntityData } from '@/hooks/useEntities';
 
-// Define a new interface for entity data
-interface EntityData {
-  name: string;
-  projectCount: number;
-  classification: string;
-  distance: number; // in miles
+// Local interface for entity data with projects
+interface LocalEntityData extends EntityData {
   projects: Project[];
 }
 
@@ -26,88 +23,50 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   onAddFilter
 }) => {
   const [activeTab, setActiveTab] = useState<'ahj' | 'utility'>('ahj');
-  const [entities, setEntities] = useState<EntityData[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [visibleItems, setVisibleItems] = useState<EntityData[]>([]);
   const [loadedCount, setLoadedCount] = useState(20);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Use the entities hook to fetch AHJ and Utility data directly from Supabase
+  const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
 
-  // Calculate distance between two points using Haversine formula
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 3958.8; // Earth's radius in miles
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  };
-
-  // Process projects to get entity data
+  // Update distances when user location changes
   useEffect(() => {
-    if (!projects.length) {
-      setEntities([]);
-      return;
+    if (userLocation) {
+      calculateDistances(userLocation);
     }
-
-    const processEntities = () => {
-      const entityMap = new Map<string, EntityData>();
-      
-      projects.forEach(project => {
-        const entityName = activeTab === 'ahj' ? project.ahj.name : project.utility.name;
-        const classification = activeTab === 'ahj' ? project.ahj.classification : project.utility.classification || '';
-        
-        if (!entityName) return;
-        
-        // Calculate distance if user location and project coordinates are available
-        let distance = Number.MAX_VALUE;
-        if (userLocation && project.latitude && project.longitude) {
-          distance = calculateDistance(
-            userLocation.latitude, 
-            userLocation.longitude, 
-            project.latitude, 
-            project.longitude
-          );
-        }
-        
-        if (entityMap.has(entityName)) {
-          const entity = entityMap.get(entityName)!;
-          entity.projectCount += 1;
-          entity.distance = Math.min(entity.distance, distance);
-          entity.projects.push(project);
-        } else {
-          entityMap.set(entityName, {
-            name: entityName,
-            projectCount: 1,
-            classification,
-            distance,
-            projects: [project]
-          });
-        }
-      });
-      
-      // Convert map to array and sort by distance
-      let entitiesArray = Array.from(entityMap.values());
-      
-      // Sort by distance if user location is available, otherwise by name
-      if (userLocation) {
-        entitiesArray.sort((a, b) => a.distance - b.distance);
-      } else {
-        entitiesArray.sort((a, b) => a.name.localeCompare(b.name));
-      }
-      
-      setEntities(entitiesArray);
-    };
+  }, [userLocation, calculateDistances]);
+  
+  // Get the current entities based on the active tab
+  const currentEntities = activeTab === 'ahj' ? ahjs : utilities;
+  
+  // Map projects to entities for the "View on Map" functionality
+  const entitiesWithProjects = useMemo(() => {
+    const projectMap = new Map<string, Project[]>();
     
-    processEntities();
-  }, [projects, activeTab, userLocation]);
+    // Group projects by entity ID
+    projects.forEach(project => {
+      const entityId = activeTab === 'ahj' ? project.ahj.id : project.utility.id;
+      if (!entityId) return;
+      
+      if (projectMap.has(entityId)) {
+        projectMap.get(entityId)!.push(project);
+      } else {
+        projectMap.set(entityId, [project]);
+      }
+    });
+    
+    // Add projects to entities
+    return currentEntities.map(entity => ({
+      ...entity,
+      projects: projectMap.get(entity.id) || []
+    }));
+  }, [projects, currentEntities, activeTab]);
 
   // Load more items when scrolling
   useEffect(() => {
-    setVisibleItems(entities.slice(0, loadedCount));
-  }, [entities, loadedCount]);
+    setVisibleItems(entitiesWithProjects.slice(0, loadedCount));
+  }, [entitiesWithProjects, loadedCount]);
   
   // Handle scroll event to load more items
   useEffect(() => {
@@ -118,12 +77,10 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       
       // If scrolled near the bottom, load more items
       if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (loadedCount < entities.length) {
-          setIsLoading(true);
-          // Simulate loading delay (can be removed in production)
+        if (loadedCount < entitiesWithProjects.length) {
+          // Load more items
           setTimeout(() => {
-            setLoadedCount(prev => Math.min(prev + 10, entities.length));
-            setIsLoading(false);
+            setLoadedCount(prev => Math.min(prev + 10, entitiesWithProjects.length));
           }, 200);
         }
       }
@@ -144,7 +101,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   // Reset loaded count when entities change
   useEffect(() => {
     setLoadedCount(20);
-  }, [entities]);
+  }, [entitiesWithProjects]);
   
   // Set a fixed height style to ensure the table fills the available space
   useEffect(() => {
@@ -233,7 +190,15 @@ const EntityListView: React.FC<EntityListViewProps> = ({
           className="flex-1 overflow-auto bg-[#121212] scroll-smooth" 
           ref={scrollContainerRef}
         >
-          {visibleItems.length === 0 ? (
+          {isLoading ? (
+            <div className="px-6 py-4 text-center text-gray-400">
+              Loading {activeTab === 'ahj' ? 'AHJs' : 'utilities'}...
+            </div>
+          ) : error ? (
+            <div className="px-6 py-4 text-center text-red-400">
+              Error: {error}
+            </div>
+          ) : visibleItems.length === 0 ? (
             <div className="px-6 py-4 text-center text-gray-400">
               No {activeTab === 'ahj' ? 'AHJs' : 'utilities'} found
             </div>
@@ -286,9 +251,9 @@ const EntityListView: React.FC<EntityListViewProps> = ({
               )}
               
               {/* End of list indicator */}
-              {!isLoading && loadedCount >= entities.length && entities.length > 0 && (
+              {!isLoading && loadedCount >= entitiesWithProjects.length && entitiesWithProjects.length > 0 && (
                 <div className="py-4 text-center text-gray-500 text-sm">
-                  Showing all {entities.length} {activeTab === 'ahj' ? 'AHJs' : 'utilities'}
+                  Showing all {entitiesWithProjects.length} {activeTab === 'ahj' ? 'AHJs' : 'utilities'}
                 </div>
               )}
             </div>
