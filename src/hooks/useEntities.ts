@@ -19,6 +19,9 @@ export function useEntities() {
   // Add a ref to track if the component is mounted
   const isMounted = useRef(true);
 
+  // Add a ref to track the fetch request ID to handle race conditions
+  const fetchIdRef = useRef(0);
+
   useEffect(() => {
     // Set isMounted to true when component mounts
     isMounted.current = true;
@@ -27,27 +30,49 @@ export function useEntities() {
       // Only set state if component is still mounted
       if (!isMounted.current) return;
       
+      // Increment fetch ID to track the latest request
+      const currentFetchId = ++fetchIdRef.current;
+      
+      // Set loading state
       setIsLoading(true);
       setError(null);
       
+      // Add timeout to prevent infinite loading
+      const timeoutId = setTimeout(() => {
+        if (isMounted.current && fetchIdRef.current === currentFetchId) {
+          setError('Request timed out. Please try again.');
+          setIsLoading(false);
+        }
+      }, 15000); // 15 second timeout
+      
       try {
-        // Fetch AHJs
-        const { data: ahjData, error: ahjError } = await supabase
-          .from('ahj')
-          .select('*');
-          
-        if (ahjError) {
-          throw new Error(`Error fetching AHJs: ${ahjError.message}`);
+        // Fetch AHJs with a timeout promise
+        const ahjPromise = supabase.from('ahj').select('*');
+        
+        // Fetch Utilities with a timeout promise
+        const utilityPromise = supabase.from('utility').select('*');
+        
+        // Wait for both requests to complete
+        const [ahjResult, utilityResult] = await Promise.all([ahjPromise, utilityPromise]);
+        
+        // Check if this is still the latest request
+        if (!isMounted.current || fetchIdRef.current !== currentFetchId) {
+          clearTimeout(timeoutId);
+          return;
         }
         
-        // Fetch Utilities
-        const { data: utilityData, error: utilityError } = await supabase
-          .from('utility')
-          .select('*');
-          
-        if (utilityError) {
-          throw new Error(`Error fetching Utilities: ${utilityError.message}`);
+        // Check for errors
+        if (ahjResult.error) {
+          throw new Error(`Error fetching AHJs: ${ahjResult.error.message}`);
         }
+        
+        if (utilityResult.error) {
+          throw new Error(`Error fetching Utilities: ${utilityResult.error.message}`);
+        }
+        
+        // Extract data
+        const ahjData = ahjResult.data;
+        const utilityData = utilityResult.data;
         
         // Count projects for each AHJ and Utility manually since we can't use group in static export mode
         // Get all projects with AHJ and utility IDs
@@ -247,35 +272,134 @@ export function useEntities() {
           };
         });
         
-        // Only update state if component is still mounted
-        if (isMounted.current) {
+        // Only update state if component is still mounted and this is still the latest request
+        if (isMounted.current && fetchIdRef.current === currentFetchId) {
           setAhjs(processedAhjs);
           setUtilities(processedUtilities);
-        }
-      } catch (error: any) {
-        console.error('Error in useEntities hook:', error);
-        // Only update state if component is still mounted
-        if (isMounted.current) {
-          setError(error.message || 'Failed to load entity data');
-        }
-      } finally {
-        // Only update state if component is still mounted
-        if (isMounted.current) {
           setIsLoading(false);
         }
+        
+        // Clear the timeout since we completed successfully
+        clearTimeout(timeoutId);
+      } catch (error: any) {
+        console.error('Error in useEntities hook:', error);
+        // Only update state if component is still mounted and this is still the latest request
+        if (isMounted.current && fetchIdRef.current === currentFetchId) {
+          setError(error.message || 'Failed to load entity data');
+          setIsLoading(false);
+        }
+        
+        // Clear the timeout since we handled the error
+        clearTimeout(timeoutId);
       }
     };
     
-    fetchEntities();
+    // Start the fetch process
+    const fetchPromise = fetchEntities();
     
     // Cleanup function to prevent state updates after unmount
     return () => {
       isMounted.current = false;
+      // Reset fetch ID to cancel any in-progress operations
+      fetchIdRef.current = 0;
     };
   }, []);
   
-  // We no longer need the global calculateDistances function since we're now calculating distances
-  // only for visible items in the EntityListView component
+  /**
+   * Calculate distances for entities based on user location
+   * Memoized to prevent unnecessary recalculations
+   */
+  const calculateDistances = useCallback((userLocation: { latitude: number; longitude: number } | null) => {
+    // Create a calculation ID to track this specific calculation request
+    const calculationId = ++fetchIdRef.current;
+    
+    console.log('[DISTANCE] Starting distance calculations with user location:', userLocation);
+    if (!userLocation) {
+      console.log('[DISTANCE] No user location provided, skipping distance calculations');
+      return;
+    }
+    
+    // If component is not mounted, don't proceed
+    if (!isMounted.current) {
+      return;
+    }
+    
+    // Reduce logging to prevent console spam
+    console.log(`[DISTANCE] Calculating distances for ${ahjs.length} AHJs and ${utilities.length} Utilities`);
+    
+    // Count how many entities have valid coordinates
+    let ahjsWithCoords = 0;
+    let utilitiesWithCoords = 0;
+    
+    // Calculate distance for AHJs
+    const updatedAhjs = ahjs.map(ahj => {
+      if (ahj.latitude && ahj.longitude) {
+        ahjsWithCoords++;
+        const distance = calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          ahj.latitude,
+          ahj.longitude
+        );
+        // Only log a few entities to reduce console spam
+        if (ahjsWithCoords <= 3) {
+          console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
+        }
+        return { ...ahj, distance };
+      }
+      return ahj;
+    });
+    
+    // Calculate distance for Utilities
+    const updatedUtilities = utilities.map(utility => {
+      if (utility.latitude && utility.longitude) {
+        utilitiesWithCoords++;
+        const distance = calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          utility.latitude,
+          utility.longitude
+        );
+        // Only log a few entities to reduce console spam
+        if (utilitiesWithCoords <= 3) {
+          console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
+        }
+        return { ...utility, distance };
+      }
+      return utility;
+    });
+    
+    // Sort by distance
+    const sortedAhjs = [...updatedAhjs].sort((a, b) => a.distance - b.distance);
+    const sortedUtilities = [...updatedUtilities].sort((a, b) => a.distance - b.distance);
+    
+    console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
+    
+    // Only update state if component is still mounted, this is the latest calculation,
+    // and if the distances have actually changed
+    if (isMounted.current && fetchIdRef.current === calculationId) {
+      // Use functional updates to avoid dependency issues
+      setAhjs(prev => {
+        // Only update if the distances have changed
+        const hasChanged = sortedAhjs.some((ahj, i) => 
+          i >= prev.length || ahj.distance !== prev[i].distance
+        );
+        return hasChanged ? sortedAhjs : prev;
+      });
+      
+      setUtilities(prev => {
+        // Only update if the distances have changed
+        const hasChanged = sortedUtilities.some((utility, i) => 
+          i >= prev.length || utility.distance !== prev[i].distance
+        );
+        return hasChanged ? sortedUtilities : prev;
+      });
+      
+      console.log('[DISTANCE] Distance calculations applied successfully');
+    } else {
+      console.log('[DISTANCE] Skipping state update - newer calculation in progress or component unmounted');
+    }
+  }, [ahjs, utilities]);
   
   /**
    * Calculate distance between two points using Haversine formula
@@ -296,6 +420,7 @@ export function useEntities() {
     ahjs,
     utilities,
     isLoading,
-    error
+    error,
+    calculateDistances
   };
 }
