@@ -32,18 +32,24 @@ const DualListView: React.FC<DualListViewProps> = ({
   const [activeView, setActiveView] = useState<'list' | 'entities'>('list');
   const [myProjects, setMyProjects] = useState<Project[]>([]);
 
-  // Filter projects to get "my projects" based on the showOnlyMyProjects flag
+  // Filter projects to get "my projects" based on the user's rep_id
   useEffect(() => {
-    if (showOnlyMyProjects) {
-      // Filter projects to only include those associated with the current user
-      // This assumes projects have a rep_id field that can be used to identify the user's projects
-      const { user } = useAuth();
-      const filteredProjects = projects.filter(project => project.rep_id === user?.id);
+    const { user, userProfile } = useAuth();
+    
+    // Always filter to only show the user's projects in the My Projects view
+    // This uses the rep_id field to identify the user's projects
+    if (userProfile?.rep_id) {
+      const filteredProjects = projects.filter(project => 
+        project.rep_id === userProfile.rep_id
+      );
       setMyProjects(filteredProjects);
+      console.log(`Filtered to ${filteredProjects.length} projects for rep_id: ${userProfile.rep_id}`);
     } else {
-      setMyProjects(projects);
+      // If no rep_id is available, show no projects
+      setMyProjects([]);
+      console.log('No rep_id available, showing no projects in My Projects view');
     }
-  }, [projects, showOnlyMyProjects]);
+  }, [projects]);
 
   // Handle entity view on map
   const handleEntityViewOnMap = (entityName: string, entityType: 'ahj' | 'utility') => {
