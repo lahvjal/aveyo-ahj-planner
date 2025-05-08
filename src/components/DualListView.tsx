@@ -40,17 +40,25 @@ const DualListView: React.FC<DualListViewProps> = ({
     // Always filter to only show the user's projects in the My Projects view
     // This uses the rep_id field to identify the user's projects
     if (userProfile?.rep_id) {
+      // Create a stable reference to filtered projects to prevent infinite loops
       const filteredProjects = projects.filter(project => 
         project.rep_id === userProfile.rep_id
       );
-      setMyProjects(filteredProjects);
-      console.log(`Filtered to ${filteredProjects.length} projects for rep_id: ${userProfile.rep_id}`);
-    } else {
-      // If no rep_id is available, show no projects
+      
+      // Only update state if the filtered projects have actually changed
+      const currentIds = myProjects.map(p => p.id).sort().join(',');
+      const newIds = filteredProjects.map(p => p.id).sort().join(',');
+      
+      if (currentIds !== newIds) {
+        setMyProjects(filteredProjects);
+        console.log(`Filtered to ${filteredProjects.length} projects for rep_id: ${userProfile.rep_id}`);
+      }
+    } else if (myProjects.length > 0) {
+      // If no rep_id is available, show no projects, but only update if needed
       setMyProjects([]);
       console.log('No rep_id available, showing no projects in My Projects view');
     }
-  }, [projects, userProfile]);
+  }, [projects, userProfile, myProjects]);
 
   // Handle entity view on map
   const handleEntityViewOnMap = (entityName: string, entityType: 'ahj' | 'utility') => {
