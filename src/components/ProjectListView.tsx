@@ -162,6 +162,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
 
   // Table headers
   const tableHeaders = [
+    { id: 'customer_name', label: 'Customer Name' },
     { id: 'address', label: 'Address' },
     { id: 'utility.name', label: 'Utility' },
     { id: 'ahj.name', label: 'AHJ' },
@@ -174,7 +175,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
       <div className="rounded-md border border-[#333333] flex-1 h-full flex flex-col">
         {/* Table header */}
         <div className="bg-[#1e1e1e] sticky top-0 z-10">
-          <div className="grid grid-cols-5 divide-x divide-[#333333]">
+          <div className="grid grid-cols-6 divide-x divide-[#333333]">
             {tableHeaders.map((header) => (
               <div 
                 key={header.id}
@@ -201,7 +202,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
               {visibleItems.map((project) => (
                 <div 
                   key={project.id}
-                  className={`grid grid-cols-5 hover:bg-[#1e1e1e] ${selectedProject?.id === project.id ? 'bg-[#333333]' : ''} ${
+                  className={`grid grid-cols-6 hover:bg-[#1e1e1e] ${selectedProject?.id === project.id ? 'bg-[#333333]' : ''} ${
                     project.isMasked ? 'opacity-70' : ''
                   }`}
                   onClick={() => handleSelectProject(project)}
@@ -215,8 +216,11 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
                         </span>
                       </div>
                     ) : (
-                      <span className="truncate block">{project.address || 'No address'}</span>
+                      <span className="truncate block">{project.customer_name || 'Unknown'}</span>
                     )}
+                  </div>
+                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
+                    <span className="truncate block">{project.address || 'No address'}</span>
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
                     <div className="flex items-center">

@@ -3,10 +3,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import MapView from '@/components/MapView';
-import ProjectListView from '@/components/ProjectListView';
+import DualListView from '@/components/DualListView';
 import ImprovedFilterPanel from '@/components/ImprovedFilterPanel';
 import { useProjects } from '@/hooks/useProjects';
-import { Project, ProjectFilter } from '@/utils/types';
+import { Project, ProjectFilter, PredictionResult } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
 import { FiMap, FiList, FiAlertCircle } from 'react-icons/fi';
 
@@ -27,11 +27,8 @@ export default function HomePage() {
   // State for selected project
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   
-  // State for prediction mode
-  const [predictionModeActive, setPredictionModeActive] = useState(true); // Default to true
-  const [predictionResult, setPredictionResult] = useState(null);
-  const [predictionRadius, setPredictionRadius] = useState(5);
-  const [predictionPinLocation, setPredictionPinLocation] = useState<[number, number] | null>(null);
+  // State for user location
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   
   // Use the projects hook to fetch and filter data
   const { 
@@ -65,29 +62,27 @@ export default function HomePage() {
 
   // Handle project selection
   const handleSelectProject = (project: Project) => {
-    // Disable prediction mode when selecting a project
-    if (predictionModeActive) {
-      setPredictionModeActive(false);
-    }
-    
     setSelectedProject(prevSelected => 
       prevSelected && prevSelected.id === project.id ? null : project
     );
   };
 
-  // Toggle prediction mode
-  const togglePredictionMode = () => {
-    // Clear selected project when entering prediction mode
-    if (!predictionModeActive) {
-      setSelectedProject(null);
+  // Get user location
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          });
+        },
+        (error) => {
+          console.error('Error getting user location:', error);
+        }
+      );
     }
-    setPredictionModeActive(!predictionModeActive);
-    
-    // Clear prediction results when turning off prediction mode
-    if (predictionModeActive) {
-      setPredictionResult(null);
-    }
-  };
+  }, []);
 
   // Handle sorting
   const [sortField, setSortField] = useState('address');
@@ -136,11 +131,7 @@ export default function HomePage() {
               onViewModeChange={setViewMode}
               showOnlyMyProjects={showOnlyMyProjects}
               toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
-              predictionModeActive={predictionModeActive}
-              togglePredictionMode={togglePredictionMode}
-              predictionResult={predictionResult}
-              predictionRadius={predictionRadius}
-              setPredictionRadius={setPredictionRadius}
+
             />
           </div>
         </div>
@@ -167,13 +158,6 @@ export default function HomePage() {
                       onSelectProject={(project) => {
                         if (project) handleSelectProject(project);
                       }}
-                      predictionModeActive={predictionModeActive}
-                      predictionResult={predictionResult}
-                      setPredictionResult={setPredictionResult}
-                      predictionRadius={predictionRadius}
-                      setPredictionRadius={setPredictionRadius}
-                      predictionPinLocation={predictionPinLocation}
-                      setPredictionPinLocation={setPredictionPinLocation}
                     />
                   ) : (
                     <EmptyStateMessage />
@@ -184,13 +168,9 @@ export default function HomePage() {
               {/* List View */}
               {viewMode === 'list' && (
                 <div className="flex flex-col h-full flex-1 p-4">
-                  <div className="mb-4 flex justify-between items-center">
-                    <h2 className="text-xl font-semibold">Projects ({projects?.length || 0})</h2>
-                  </div>
-                  
                   <div className="flex-1 overflow-hidden">
                     {projects && projects.length > 0 ? (
-                      <ProjectListView
+                      <DualListView
                         projects={projects || []}
                         selectedProject={selectedProject}
                         onSelectProject={handleSelectProject}
@@ -201,6 +181,9 @@ export default function HomePage() {
                         sortField={sortField}
                         sortDirection={sortDirection}
                         onSort={handleSort}
+                        onAddFilter={addFilter}
+                        userLocation={userLocation}
+                        showOnlyMyProjects={showOnlyMyProjects}
                       />
                     ) : (
                       <EmptyStateMessage />

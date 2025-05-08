@@ -54,6 +54,7 @@ export interface Project {
   isMasked?: boolean;
   rep_id?: string | null;
   contract_signed_date?: string;
+  customer_name?: string;
 }
 
 export interface ProjectFilter {
