@@ -72,11 +72,28 @@ export default function HomePage() {
     // Define a function to safely get the user's location
     const getUserLocation = () => {
       console.log('[GEOLOCATION] Starting geolocation request...');
+      
+      // Default location (fallback) - Denver, CO coordinates
+      const defaultLocation = {
+        latitude: 39.7392,
+        longitude: -104.9903
+      };
+      
       try {
         if (navigator.geolocation) {
           console.log('[GEOLOCATION] Browser supports geolocation API');
+          
+          // Try with high accuracy first
           navigator.geolocation.getCurrentPosition(
             (position) => {
+              // Check if coordinates are valid (not 0,0 which can be a sign of error)
+              if (position.coords.latitude === 0 && position.coords.longitude === 0) {
+                console.log('[GEOLOCATION] Warning: Received 0,0 coordinates, likely an error');
+                console.log('[GEOLOCATION] Using default location as fallback');
+                setUserLocation(defaultLocation);
+                return;
+              }
+              
               const userCoords = {
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude
@@ -85,41 +102,68 @@ export default function HomePage() {
               console.log('[GEOLOCATION] Accuracy:', position.coords.accuracy, 'meters');
               setUserLocation(userCoords);
             },
-            (error) => {
-              // Handle specific geolocation errors
-              let errorMessage = 'Unknown error';
-              switch(error.code) {
-                case error.PERMISSION_DENIED:
-                  errorMessage = 'User denied the request for geolocation';
-                  break;
-                case error.POSITION_UNAVAILABLE:
-                  errorMessage = 'Location information is unavailable';
-                  break;
-                case error.TIMEOUT:
-                  errorMessage = 'The request to get user location timed out';
-                  break;
-              }
-              console.log(`[GEOLOCATION] Error: ${errorMessage}. Error code: ${error.code}`);
-              console.log('[GEOLOCATION] Continuing without user location. Distance calculations will not be available.');
+            (highAccuracyError) => {
+              console.log('[GEOLOCATION] High accuracy position failed, trying with low accuracy...');
               
-              // Continue without geolocation - application should still work
-              setUserLocation(null);
+              // If high accuracy fails, try with low accuracy
+              navigator.geolocation.getCurrentPosition(
+                (position) => {
+                  const userCoords = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                  };
+                  console.log('[GEOLOCATION] Success with low accuracy! User coordinates:', userCoords);
+                  console.log('[GEOLOCATION] Accuracy:', position.coords.accuracy, 'meters');
+                  setUserLocation(userCoords);
+                },
+                (error) => {
+                  // Handle specific geolocation errors
+                  let errorMessage = 'Unknown error';
+                  switch(error.code) {
+                    case error.PERMISSION_DENIED:
+                      errorMessage = 'User denied the request for geolocation';
+                      break;
+                    case error.POSITION_UNAVAILABLE:
+                      errorMessage = 'Location information is unavailable';
+                      break;
+                    case error.TIMEOUT:
+                      errorMessage = 'The request to get user location timed out';
+                      break;
+                  }
+                  console.log(`[GEOLOCATION] Error: ${errorMessage}. Error code: ${error.code}`);
+                  
+                  // For kCLErrorLocationUnknown (POSITION_UNAVAILABLE), use default location
+                  if (error.code === error.POSITION_UNAVAILABLE) {
+                    console.log('[GEOLOCATION] Using default location as fallback for distance calculations');
+                    setUserLocation(defaultLocation);
+                  } else {
+                    console.log('[GEOLOCATION] Continuing without user location. Distance calculations will not be available.');
+                    setUserLocation(null);
+                  }
+                },
+                { 
+                  timeout: 15000,         // 15 second timeout
+                  maximumAge: 300000,     // Accept cached positions up to 5 minutes old
+                  enableHighAccuracy: false  // Low accuracy mode
+                }
+              );
             },
             { 
               timeout: 10000,         // 10 second timeout
               maximumAge: 60000,     // Accept cached positions up to 1 minute old
-              enableHighAccuracy: false  // Don't need high accuracy, saves battery
+              enableHighAccuracy: true  // Try high accuracy first
             }
           );
           console.log('[GEOLOCATION] Request sent, waiting for user permission or result...');
         } else {
           console.log('[GEOLOCATION] Browser does not support geolocation API');
-          setUserLocation(null);
+          console.log('[GEOLOCATION] Using default location as fallback');
+          setUserLocation(defaultLocation);
         }
       } catch (err) {
         console.log('[GEOLOCATION] Unexpected error:', err);
-        console.log('[GEOLOCATION] Continuing without location features');
-        setUserLocation(null);
+        console.log('[GEOLOCATION] Using default location as fallback');
+        setUserLocation(defaultLocation);
       }
     };
     
