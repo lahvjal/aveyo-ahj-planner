@@ -324,46 +324,116 @@ export function useEntities() {
       return;
     }
     
-    // Reduce logging to prevent console spam
-    console.log(`[DISTANCE] Calculating distances for ${ahjs.length} AHJs and ${utilities.length} Utilities`);
+    // Performance metrics
+    const startTime = performance.now();
     
-    // Count how many entities have valid coordinates
+    // Create spatial indices for AHJs and Utilities
+    const ahjIndex = createSpatialIndex(ahjs);
+    const utilityIndex = createSpatialIndex(utilities);
+    
+    // Get user's grid cell
+    const gridSize = 1; // Must match the value in createSpatialIndex
+    const userCellX = Math.floor(userLocation.longitude / gridSize);
+    const userCellY = Math.floor(userLocation.latitude / gridSize);
+    
+    // Determine nearby cells (current cell and 8 surrounding cells)
+    const nearbyCells: string[] = [];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        nearbyCells.push(`${userCellX + dx}:${userCellY + dy}`);
+      }
+    }
+    
+    console.log(`[DISTANCE] User location is in cell ${userCellX}:${userCellY}, checking ${nearbyCells.length} nearby cells`);
+    
+    // Process AHJs with spatial indexing
     let ahjsWithCoords = 0;
-    let utilitiesWithCoords = 0;
-    
-    // Calculate distance for AHJs
+    let ahjsInNearbyCells = 0;
     const updatedAhjs = ahjs.map(ahj => {
       if (ahj.latitude && ahj.longitude) {
         ahjsWithCoords++;
-        const distance = calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          ahj.latitude,
-          ahj.longitude
-        );
-        // Only log a few entities to reduce console spam
-        if (ahjsWithCoords <= 3) {
-          console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
+        
+        // Calculate the entity's cell
+        const cellX = Math.floor(ahj.longitude / gridSize);
+        const cellY = Math.floor(ahj.latitude / gridSize);
+        const cellKey = `${cellX}:${cellY}`;
+        
+        // Check if the entity is in a nearby cell
+        const isNearby = nearbyCells.includes(cellKey);
+        
+        // For nearby entities, calculate exact distance
+        // For distant entities, use an approximate distance based on cell centers
+        let distance;
+        if (isNearby) {
+          ahjsInNearbyCells++;
+          distance = calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            ahj.latitude,
+            ahj.longitude
+          );
+          // Only log a few entities to reduce console spam
+          if (ahjsInNearbyCells <= 3) {
+            console.log(`[DISTANCE] Nearby AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
+          }
+        } else {
+          // Approximate distance based on cell centers
+          // This is less accurate but much faster for distant entities
+          const approxDistance = calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            (cellY + 0.5) * gridSize, // Center of cell
+            (cellX + 0.5) * gridSize  // Center of cell
+          );
+          distance = approxDistance;
         }
+        
         return { ...ahj, distance };
       }
       return ahj;
     });
     
-    // Calculate distance for Utilities
+    // Process Utilities with spatial indexing
+    let utilitiesWithCoords = 0;
+    let utilitiesInNearbyCells = 0;
     const updatedUtilities = utilities.map(utility => {
       if (utility.latitude && utility.longitude) {
         utilitiesWithCoords++;
-        const distance = calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          utility.latitude,
-          utility.longitude
-        );
-        // Only log a few entities to reduce console spam
-        if (utilitiesWithCoords <= 3) {
-          console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
+        
+        // Calculate the entity's cell
+        const cellX = Math.floor(utility.longitude / gridSize);
+        const cellY = Math.floor(utility.latitude / gridSize);
+        const cellKey = `${cellX}:${cellY}`;
+        
+        // Check if the entity is in a nearby cell
+        const isNearby = nearbyCells.includes(cellKey);
+        
+        // For nearby entities, calculate exact distance
+        // For distant entities, use an approximate distance based on cell centers
+        let distance;
+        if (isNearby) {
+          utilitiesInNearbyCells++;
+          distance = calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            utility.latitude,
+            utility.longitude
+          );
+          // Only log a few entities to reduce console spam
+          if (utilitiesInNearbyCells <= 3) {
+            console.log(`[DISTANCE] Nearby Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
+          }
+        } else {
+          // Approximate distance based on cell centers
+          const approxDistance = calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            (cellY + 0.5) * gridSize, // Center of cell
+            (cellX + 0.5) * gridSize  // Center of cell
+          );
+          distance = approxDistance;
         }
+        
         return { ...utility, distance };
       }
       return utility;
@@ -372,6 +442,11 @@ export function useEntities() {
     // Sort by distance
     const sortedAhjs = [...updatedAhjs].sort((a, b) => a.distance - b.distance);
     const sortedUtilities = [...updatedUtilities].sort((a, b) => a.distance - b.distance);
+    
+    // Performance metrics
+    const endTime = performance.now();
+    console.log(`[DISTANCE] Calculation completed in ${(endTime - startTime).toFixed(2)}ms`);
+    console.log(`[DISTANCE] Processed ${ahjsInNearbyCells}/${ahjsWithCoords} nearby AHJs and ${utilitiesInNearbyCells}/${utilitiesWithCoords} nearby Utilities with exact distances`);
     
     console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
     
@@ -414,6 +489,32 @@ export function useEntities() {
       Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+  }
+  
+  /**
+   * Create a grid-based spatial index for more efficient distance calculations
+   * This divides the US into grid cells and only calculates exact distances for entities in nearby cells
+   */
+  function createSpatialIndex(entities: EntityData[]): Map<string, EntityData[]> {
+    const gridSize = 1; // Grid cell size in degrees (roughly 69 miles per degree at the equator)
+    const spatialIndex = new Map<string, EntityData[]>();
+    
+    entities.forEach(entity => {
+      if (entity.latitude && entity.longitude) {
+        // Calculate grid cell key based on coordinates
+        const cellX = Math.floor(entity.longitude / gridSize);
+        const cellY = Math.floor(entity.latitude / gridSize);
+        const cellKey = `${cellX}:${cellY}`;
+        
+        // Add entity to its grid cell
+        if (!spatialIndex.has(cellKey)) {
+          spatialIndex.set(cellKey, []);
+        }
+        spatialIndex.get(cellKey)!.push(entity);
+      }
+    });
+    
+    return spatialIndex;
   }
   
   return {

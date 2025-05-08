@@ -1,8 +1,39 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
 import { useEntities, EntityData } from '@/hooks/useEntities';
+
+/**
+ * Format distance in a user-friendly way
+ * - Less than 0.1 miles: "< 0.1 miles"
+ * - Less than 1 mile: "0.x miles" (1 decimal place)
+ * - 1-10 miles: "x.x miles" (1 decimal place)
+ * - Over 10 miles: "xx miles" (rounded to nearest mile)
+ * - Over 100 miles: "xxx miles" (rounded to nearest 5 miles)
+ */
+function formatDistance(distance?: number): string {
+  if (distance === undefined || distance === null) {
+    return 'N/A';
+  }
+  
+  if (distance === Number.MAX_VALUE || distance === Infinity) {
+    return 'Unknown';
+  }
+  
+  if (distance < 0.1) {
+    return '< 0.1 mi';
+  } else if (distance < 1) {
+    return `${distance.toFixed(1)} mi`;
+  } else if (distance < 10) {
+    return `${distance.toFixed(1)} mi`;
+  } else if (distance < 100) {
+    return `${Math.round(distance)} mi`;
+  } else {
+    // Round to nearest 5 miles for distances over 100 miles
+    return `${Math.round(distance / 5) * 5} mi`;
+  }
+}
 
 // Local interface for entity data with projects
 interface LocalEntityData extends EntityData {
@@ -28,33 +59,25 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
   // Use the entities hook to fetch AHJ and Utility data directly from Supabase
-  const { ahjs, utilities, isLoading, error } = useEntities();
+  const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
 
-  // Calculate distance for a single entity
-  const calculateDistance = useCallback((entity: EntityData, userLocation: { latitude: number; longitude: number }) => {
-    if (!entity.latitude || !entity.longitude || !userLocation) return entity;
-    
-    const R = 3958.8; // Earth's radius in miles
-    const dLat = (entity.latitude - userLocation.latitude) * Math.PI / 180;
-    const dLon = (entity.longitude - userLocation.longitude) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(userLocation.latitude * Math.PI / 180) * Math.cos(entity.latitude * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distance = R * c;
-    
-    return { ...entity, distance };
-  }, []);
+  // Update distances when user location changes
+  // Using a ref to track previous location to avoid unnecessary calculations
+  const prevLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   
-  // Calculate distances for visible items only
   useEffect(() => {
-    if (!userLocation || !entitiesWithProjects || entitiesWithProjects.length === 0) return;
-    
-    // Only calculate for the visible items
-    const itemsWithDistances = visibleItems.map(item => calculateDistance(item, userLocation));
-    setVisibleItems(itemsWithDistances);
-  }, [visibleItems, userLocation, calculateDistance]);
+    // Only calculate distances if the location has actually changed
+    if (userLocation) {
+      const locationChanged = !prevLocationRef.current || 
+        prevLocationRef.current.latitude !== userLocation.latitude || 
+        prevLocationRef.current.longitude !== userLocation.longitude;
+      
+      if (locationChanged) {
+        calculateDistances(userLocation);
+        prevLocationRef.current = userLocation;
+      }
+    }
+  }, [userLocation, calculateDistances]);
   
   // Get the current entities based on the active tab
   const currentEntities = activeTab === 'ahj' ? ahjs : utilities;
@@ -264,11 +287,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
                     </span>
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    {entity.distance < Number.MAX_VALUE ? (
-                      <span className="truncate block">{Math.round(entity.distance * 10) / 10} MILES</span>
-                    ) : (
-                      <span className="truncate block text-gray-500">Unknown</span>
-                    )}
+                    <span className="truncate block">{formatDistance(entity.distance)}</span>
                   </div>
                   <div className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
