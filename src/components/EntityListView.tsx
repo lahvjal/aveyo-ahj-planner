@@ -31,9 +31,20 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
 
   // Update distances when user location changes
+  // Using a ref to track previous location to avoid unnecessary calculations
+  const prevLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  
   useEffect(() => {
+    // Only calculate distances if the location has actually changed
     if (userLocation) {
-      calculateDistances(userLocation);
+      const locationChanged = !prevLocationRef.current || 
+        prevLocationRef.current.latitude !== userLocation.latitude || 
+        prevLocationRef.current.longitude !== userLocation.longitude;
+      
+      if (locationChanged) {
+        calculateDistances(userLocation);
+        prevLocationRef.current = userLocation;
+      }
     }
   }, [userLocation, calculateDistances]);
   

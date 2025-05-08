@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/utils/supabaseClient';
 
 export interface EntityData {
@@ -16,9 +16,17 @@ export function useEntities() {
   const [utilities, setUtilities] = useState<EntityData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Add a ref to track if the component is mounted
+  const isMounted = useRef(true);
 
   useEffect(() => {
+    // Set isMounted to true when component mounts
+    isMounted.current = true;
+    
     const fetchEntities = async () => {
+      // Only set state if component is still mounted
+      if (!isMounted.current) return;
+      
       setIsLoading(true);
       setError(null);
       
@@ -239,23 +247,38 @@ export function useEntities() {
           };
         });
         
-        setAhjs(processedAhjs);
-        setUtilities(processedUtilities);
+        // Only update state if component is still mounted
+        if (isMounted.current) {
+          setAhjs(processedAhjs);
+          setUtilities(processedUtilities);
+        }
       } catch (error: any) {
         console.error('Error in useEntities hook:', error);
-        setError(error.message || 'Failed to load entity data');
+        // Only update state if component is still mounted
+        if (isMounted.current) {
+          setError(error.message || 'Failed to load entity data');
+        }
       } finally {
-        setIsLoading(false);
+        // Only update state if component is still mounted
+        if (isMounted.current) {
+          setIsLoading(false);
+        }
       }
     };
     
     fetchEntities();
+    
+    // Cleanup function to prevent state updates after unmount
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
   
   /**
    * Calculate distances for entities based on user location
+   * Memoized to prevent unnecessary recalculations
    */
-  const calculateDistances = (userLocation: { latitude: number; longitude: number } | null) => {
+  const calculateDistances = useCallback((userLocation: { latitude: number; longitude: number } | null) => {
     console.log('[DISTANCE] Starting distance calculations with user location:', userLocation);
     if (!userLocation) {
       console.log('[DISTANCE] No user location provided, skipping distance calculations');
@@ -313,10 +336,26 @@ export function useEntities() {
     
     console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
     
-    // Use functional updates to avoid dependency issues
-    setAhjs(sortedAhjs);
-    setUtilities(sortedUtilities);
-  };
+    // Only update state if component is still mounted and if the distances have actually changed
+    if (isMounted.current) {
+      // Use functional updates to avoid dependency issues
+      setAhjs(prev => {
+        // Only update if the distances have changed
+        const hasChanged = sortedAhjs.some((ahj, i) => 
+          i >= prev.length || ahj.distance !== prev[i].distance
+        );
+        return hasChanged ? sortedAhjs : prev;
+      });
+      
+      setUtilities(prev => {
+        // Only update if the distances have changed
+        const hasChanged = sortedUtilities.some((utility, i) => 
+          i >= prev.length || utility.distance !== prev[i].distance
+        );
+        return hasChanged ? sortedUtilities : prev;
+      });
+    }
+  }, [ahjs, utilities]);
   
   /**
    * Calculate distance between two points using Haversine formula
