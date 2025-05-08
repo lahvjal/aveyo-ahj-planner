@@ -71,15 +71,19 @@ export default function HomePage() {
   useEffect(() => {
     // Define a function to safely get the user's location
     const getUserLocation = () => {
+      console.log('[GEOLOCATION] Starting geolocation request...');
       try {
         if (navigator.geolocation) {
+          console.log('[GEOLOCATION] Browser supports geolocation API');
           navigator.geolocation.getCurrentPosition(
             (position) => {
-              setUserLocation({
+              const userCoords = {
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude
-              });
-              console.log('User location obtained successfully');
+              };
+              console.log('[GEOLOCATION] Success! User coordinates:', userCoords);
+              console.log('[GEOLOCATION] Accuracy:', position.coords.accuracy, 'meters');
+              setUserLocation(userCoords);
             },
             (error) => {
               // Handle specific geolocation errors
@@ -95,8 +99,8 @@ export default function HomePage() {
                   errorMessage = 'The request to get user location timed out';
                   break;
               }
-              // Use a more discreet log level since this is an expected error
-              console.log(`Notice: ${errorMessage}. Continuing without geolocation.`);
+              console.log(`[GEOLOCATION] Error: ${errorMessage}. Error code: ${error.code}`);
+              console.log('[GEOLOCATION] Continuing without user location. Distance calculations will not be available.');
               
               // Continue without geolocation - application should still work
               setUserLocation(null);
@@ -107,12 +111,14 @@ export default function HomePage() {
               enableHighAccuracy: false  // Don't need high accuracy, saves battery
             }
           );
+          console.log('[GEOLOCATION] Request sent, waiting for user permission or result...');
         } else {
-          console.log('Geolocation is not supported by this browser');
+          console.log('[GEOLOCATION] Browser does not support geolocation API');
           setUserLocation(null);
         }
       } catch (err) {
-        console.log('Notice: Unable to access geolocation. Continuing without location features.');
+        console.log('[GEOLOCATION] Unexpected error:', err);
+        console.log('[GEOLOCATION] Continuing without location features');
         setUserLocation(null);
       }
     };

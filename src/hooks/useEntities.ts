@@ -69,42 +69,63 @@ export function useEntities() {
           }
         });
         
+        console.log(`[COORDINATES] Processing ${ahjData?.length || 0} AHJs and ${utilityData?.length || 0} Utilities`);
+        
         // Process AHJ data
         const processedAhjs = (ahjData || []).map((ahj: any) => {
           // Extract coordinates from raw_payload
           let latitude: number | undefined;
           let longitude: number | undefined;
           
+          console.log(`[COORDINATES] Processing AHJ ID: ${ahj.ahj_item_id || ahj.id}`);
+          
           try {
             if (ahj.raw_payload) {
+              console.log(`[COORDINATES] AHJ has raw_payload, type: ${typeof ahj.raw_payload}`);
               let rawPayload = ahj.raw_payload;
               
               // Handle nested raw_payload structure
               if (typeof rawPayload === 'object' && rawPayload.raw_payload) {
+                console.log('[COORDINATES] Found nested raw_payload structure');
                 rawPayload = rawPayload.raw_payload;
               }
               
               // Parse string JSON if needed
               if (typeof rawPayload === 'string') {
+                console.log('[COORDINATES] raw_payload is a string, attempting to parse as JSON');
                 try {
                   rawPayload = JSON.parse(rawPayload);
+                  console.log('[COORDINATES] Successfully parsed raw_payload JSON string');
                 } catch (e) {
-                  console.error('Failed to parse AHJ raw_payload JSON string:', e);
+                  console.error('[COORDINATES] Failed to parse AHJ raw_payload JSON string:', e);
                 }
               }
               
               // Extract coordinates
               if (typeof rawPayload === 'object') {
+                console.log('[COORDINATES] raw_payload keys:', Object.keys(rawPayload));
+                
                 if (rawPayload.latitude !== undefined) {
                   latitude = parseFloat(rawPayload.latitude);
+                  console.log(`[COORDINATES] Found latitude: ${latitude}`);
+                } else {
+                  console.log('[COORDINATES] No latitude found in raw_payload');
                 }
+                
                 if (rawPayload.longitude !== undefined) {
                   longitude = parseFloat(rawPayload.longitude);
+                  console.log(`[COORDINATES] Found longitude: ${longitude}`);
+                } else {
+                  console.log('[COORDINATES] No longitude found in raw_payload');
                 }
+              } else {
+                console.log(`[COORDINATES] raw_payload is not an object, type: ${typeof rawPayload}`);
               }
+            } else {
+              console.log('[COORDINATES] AHJ has no raw_payload');
             }
           } catch (error) {
-            console.error('Error extracting coordinates from AHJ raw_payload:', error);
+            console.error('[COORDINATES] Error extracting coordinates from AHJ raw_payload:', error);
           }
           
           // Get AHJ name from raw_payload
@@ -145,36 +166,55 @@ export function useEntities() {
           let latitude: number | undefined;
           let longitude: number | undefined;
           
+          console.log(`[COORDINATES] Processing Utility ID: ${utility.utility_company_item_id || utility.id}, Name: ${utility.company_name || 'Unknown'}`);
+          
           try {
             if (utility.raw_payload) {
+              console.log(`[COORDINATES] Utility has raw_payload, type: ${typeof utility.raw_payload}`);
               let rawPayload = utility.raw_payload;
               
               // Handle nested raw_payload structure
               if (typeof rawPayload === 'object' && rawPayload.raw_payload) {
+                console.log('[COORDINATES] Found nested raw_payload structure in Utility');
                 rawPayload = rawPayload.raw_payload;
               }
               
               // Parse string JSON if needed
               if (typeof rawPayload === 'string') {
+                console.log('[COORDINATES] Utility raw_payload is a string, attempting to parse as JSON');
                 try {
                   rawPayload = JSON.parse(rawPayload);
+                  console.log('[COORDINATES] Successfully parsed Utility raw_payload JSON string');
                 } catch (e) {
-                  console.error('Failed to parse Utility raw_payload JSON string:', e);
+                  console.error('[COORDINATES] Failed to parse Utility raw_payload JSON string:', e);
                 }
               }
               
               // Extract coordinates
               if (typeof rawPayload === 'object') {
+                console.log('[COORDINATES] Utility raw_payload keys:', Object.keys(rawPayload));
+                
                 if (rawPayload.latitude !== undefined) {
                   latitude = parseFloat(rawPayload.latitude);
+                  console.log(`[COORDINATES] Found Utility latitude: ${latitude}`);
+                } else {
+                  console.log('[COORDINATES] No latitude found in Utility raw_payload');
                 }
+                
                 if (rawPayload.longitude !== undefined) {
                   longitude = parseFloat(rawPayload.longitude);
+                  console.log(`[COORDINATES] Found Utility longitude: ${longitude}`);
+                } else {
+                  console.log('[COORDINATES] No longitude found in Utility raw_payload');
                 }
+              } else {
+                console.log(`[COORDINATES] Utility raw_payload is not an object, type: ${typeof rawPayload}`);
               }
+            } else {
+              console.log('[COORDINATES] Utility has no raw_payload');
             }
           } catch (error) {
-            console.error('Error extracting coordinates from Utility raw_payload:', error);
+            console.error('[COORDINATES] Error extracting coordinates from Utility raw_payload:', error);
           }
           
           // Validate coordinates
@@ -215,39 +255,57 @@ export function useEntities() {
    * Calculate distances for entities based on user location
    */
   const calculateDistances = (userLocation: { latitude: number; longitude: number } | null) => {
-    if (!userLocation) return;
+    console.log('[DISTANCE] Starting distance calculations with user location:', userLocation);
+    if (!userLocation) {
+      console.log('[DISTANCE] No user location provided, skipping distance calculations');
+      return;
+    }
+    
+    console.log(`[DISTANCE] Calculating distances for ${ahjs.length} AHJs and ${utilities.length} Utilities`);
+    
+    // Count how many entities have valid coordinates
+    let ahjsWithCoords = 0;
+    let utilitiesWithCoords = 0;
     
     // Calculate distance for AHJs
     const updatedAhjs = ahjs.map(ahj => {
       if (ahj.latitude && ahj.longitude) {
+        ahjsWithCoords++;
         const distance = calculateDistance(
           userLocation.latitude,
           userLocation.longitude,
           ahj.latitude,
           ahj.longitude
         );
+        console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
         return { ...ahj, distance };
       }
+      console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): No coordinates available`);
       return ahj;
     });
     
     // Calculate distance for Utilities
     const updatedUtilities = utilities.map(utility => {
       if (utility.latitude && utility.longitude) {
+        utilitiesWithCoords++;
         const distance = calculateDistance(
           userLocation.latitude,
           userLocation.longitude,
           utility.latitude,
           utility.longitude
         );
+        console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
         return { ...utility, distance };
       }
+      console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): No coordinates available`);
       return utility;
     });
     
     // Sort by distance
     updatedAhjs.sort((a, b) => a.distance - b.distance);
     updatedUtilities.sort((a, b) => a.distance - b.distance);
+    
+    console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
     
     setAhjs(updatedAhjs);
     setUtilities(updatedUtilities);
