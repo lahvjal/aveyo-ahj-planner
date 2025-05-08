@@ -69,6 +69,7 @@ export function useEntities() {
           }
         });
         
+        // Log summary of entities being processed
         console.log(`[COORDINATES] Processing ${ahjData?.length || 0} AHJs and ${utilityData?.length || 0} Utilities`);
         
         // Process AHJ data
@@ -261,6 +262,7 @@ export function useEntities() {
       return;
     }
     
+    // Reduce logging to prevent console spam
     console.log(`[DISTANCE] Calculating distances for ${ahjs.length} AHJs and ${utilities.length} Utilities`);
     
     // Count how many entities have valid coordinates
@@ -277,10 +279,12 @@ export function useEntities() {
           ahj.latitude,
           ahj.longitude
         );
-        console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
+        // Only log a few entities to reduce console spam
+        if (ahjsWithCoords <= 3) {
+          console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
+        }
         return { ...ahj, distance };
       }
-      console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): No coordinates available`);
       return ahj;
     });
     
@@ -294,21 +298,24 @@ export function useEntities() {
           utility.latitude,
           utility.longitude
         );
-        console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
+        // Only log a few entities to reduce console spam
+        if (utilitiesWithCoords <= 3) {
+          console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
+        }
         return { ...utility, distance };
       }
-      console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): No coordinates available`);
       return utility;
     });
     
     // Sort by distance
-    updatedAhjs.sort((a, b) => a.distance - b.distance);
-    updatedUtilities.sort((a, b) => a.distance - b.distance);
+    const sortedAhjs = [...updatedAhjs].sort((a, b) => a.distance - b.distance);
+    const sortedUtilities = [...updatedUtilities].sort((a, b) => a.distance - b.distance);
     
     console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
     
-    setAhjs(updatedAhjs);
-    setUtilities(updatedUtilities);
+    // Use functional updates to avoid dependency issues
+    setAhjs(sortedAhjs);
+    setUtilities(sortedUtilities);
   };
   
   /**

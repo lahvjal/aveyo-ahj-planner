@@ -69,7 +69,8 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     }));
   }, [projects, currentEntities, activeTab]);
 
-  // Debugging log
+  // Debugging log - removed to prevent console spam
+  /*
   useEffect(() => {
     if (entitiesWithProjects) {
       console.log({
@@ -79,6 +80,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       });
     }
   }, [loadedCount, isLoading, entitiesWithProjects]);
+  */
 
   // Load more items when scrolling
   useEffect(() => {
@@ -117,12 +119,12 @@ const EntityListView: React.FC<EntityListViewProps> = ({
         currentContainer.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [loadedCount, isLoading, entitiesWithProjects.length]);
+  }, [loadedCount, isLoading]); // Remove entitiesWithProjects.length from dependencies
   
   // Reset loaded count when entities change
   useEffect(() => {
     setLoadedCount(20);
-  }, [entitiesWithProjects]);
+  }, [activeTab]); // Only reset when tab changes, not when entities change
   
   // Set a fixed height style to ensure the table fills the available space
   useEffect(() => {
