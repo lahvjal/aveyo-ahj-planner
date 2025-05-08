@@ -274,88 +274,8 @@ export function useEntities() {
     };
   }, []);
   
-  /**
-   * Calculate distances for entities based on user location
-   * Memoized to prevent unnecessary recalculations
-   */
-  const calculateDistances = useCallback((userLocation: { latitude: number; longitude: number } | null) => {
-    console.log('[DISTANCE] Starting distance calculations with user location:', userLocation);
-    if (!userLocation) {
-      console.log('[DISTANCE] No user location provided, skipping distance calculations');
-      return;
-    }
-    
-    // Reduce logging to prevent console spam
-    console.log(`[DISTANCE] Calculating distances for ${ahjs.length} AHJs and ${utilities.length} Utilities`);
-    
-    // Count how many entities have valid coordinates
-    let ahjsWithCoords = 0;
-    let utilitiesWithCoords = 0;
-    
-    // Calculate distance for AHJs
-    const updatedAhjs = ahjs.map(ahj => {
-      if (ahj.latitude && ahj.longitude) {
-        ahjsWithCoords++;
-        const distance = calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          ahj.latitude,
-          ahj.longitude
-        );
-        // Only log a few entities to reduce console spam
-        if (ahjsWithCoords <= 3) {
-          console.log(`[DISTANCE] AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
-        }
-        return { ...ahj, distance };
-      }
-      return ahj;
-    });
-    
-    // Calculate distance for Utilities
-    const updatedUtilities = utilities.map(utility => {
-      if (utility.latitude && utility.longitude) {
-        utilitiesWithCoords++;
-        const distance = calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          utility.latitude,
-          utility.longitude
-        );
-        // Only log a few entities to reduce console spam
-        if (utilitiesWithCoords <= 3) {
-          console.log(`[DISTANCE] Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
-        }
-        return { ...utility, distance };
-      }
-      return utility;
-    });
-    
-    // Sort by distance
-    const sortedAhjs = [...updatedAhjs].sort((a, b) => a.distance - b.distance);
-    const sortedUtilities = [...updatedUtilities].sort((a, b) => a.distance - b.distance);
-    
-    console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
-    
-    // Only update state if component is still mounted and if the distances have actually changed
-    if (isMounted.current) {
-      // Use functional updates to avoid dependency issues
-      setAhjs(prev => {
-        // Only update if the distances have changed
-        const hasChanged = sortedAhjs.some((ahj, i) => 
-          i >= prev.length || ahj.distance !== prev[i].distance
-        );
-        return hasChanged ? sortedAhjs : prev;
-      });
-      
-      setUtilities(prev => {
-        // Only update if the distances have changed
-        const hasChanged = sortedUtilities.some((utility, i) => 
-          i >= prev.length || utility.distance !== prev[i].distance
-        );
-        return hasChanged ? sortedUtilities : prev;
-      });
-    }
-  }, [ahjs, utilities]);
+  // We no longer need the global calculateDistances function since we're now calculating distances
+  // only for visible items in the EntityListView component
   
   /**
    * Calculate distance between two points using Haversine formula
@@ -376,7 +296,6 @@ export function useEntities() {
     ahjs,
     utilities,
     isLoading,
-    error,
-    calculateDistances
+    error
   };
 }

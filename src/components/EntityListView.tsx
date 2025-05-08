@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
@@ -28,25 +28,33 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
   // Use the entities hook to fetch AHJ and Utility data directly from Supabase
-  const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
+  const { ahjs, utilities, isLoading, error } = useEntities();
 
-  // Update distances when user location changes
-  // Using a ref to track previous location to avoid unnecessary calculations
-  const prevLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  // Calculate distance for a single entity
+  const calculateDistance = useCallback((entity: EntityData, userLocation: { latitude: number; longitude: number }) => {
+    if (!entity.latitude || !entity.longitude || !userLocation) return entity;
+    
+    const R = 3958.8; // Earth's radius in miles
+    const dLat = (entity.latitude - userLocation.latitude) * Math.PI / 180;
+    const dLon = (entity.longitude - userLocation.longitude) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(userLocation.latitude * Math.PI / 180) * Math.cos(entity.latitude * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c;
+    
+    return { ...entity, distance };
+  }, []);
   
+  // Calculate distances for visible items only
   useEffect(() => {
-    // Only calculate distances if the location has actually changed
-    if (userLocation) {
-      const locationChanged = !prevLocationRef.current || 
-        prevLocationRef.current.latitude !== userLocation.latitude || 
-        prevLocationRef.current.longitude !== userLocation.longitude;
-      
-      if (locationChanged) {
-        calculateDistances(userLocation);
-        prevLocationRef.current = userLocation;
-      }
-    }
-  }, [userLocation, calculateDistances]);
+    if (!userLocation || !entitiesWithProjects || entitiesWithProjects.length === 0) return;
+    
+    // Only calculate for the visible items
+    const itemsWithDistances = visibleItems.map(item => calculateDistance(item, userLocation));
+    setVisibleItems(itemsWithDistances);
+  }, [visibleItems, userLocation, calculateDistance]);
   
   // Get the current entities based on the active tab
   const currentEntities = activeTab === 'ahj' ? ahjs : utilities;
