@@ -71,9 +71,7 @@ export default function HomePage() {
   useEffect(() => {
     // Define a function to safely get the user's location
     const getUserLocation = () => {
-      console.log('[GEOLOCATION-DEBUG] Starting geolocation request...');
-      console.log('[GEOLOCATION-DEBUG] User agent:', navigator.userAgent);
-      console.log('[GEOLOCATION-DEBUG] Platform:', navigator.platform);
+      console.log('[GEOLOCATION] Starting geolocation request...');
       
       // Default location (fallback) - Denver, CO coordinates
       const defaultLocation = {
@@ -81,42 +79,17 @@ export default function HomePage() {
         longitude: -104.9903
       };
       
-      // Debug function to check if we're in a simulator or emulator
-      const checkForSimulator = () => {
-        const ua = navigator.userAgent.toLowerCase();
-        const isSimulator = ua.includes('simulator') || 
-                           ua.includes('xcode') || 
-                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        console.log('[GEOLOCATION-DEBUG] Possible simulator/emulator detected:', isSimulator);
-        return isSimulator;
-      };
-      
-      // Check for simulator environment
-      const isPossiblySimulator = checkForSimulator();
-      if (isPossiblySimulator) {
-        console.log('[GEOLOCATION-DEBUG] Running in simulator environment - location services may be unreliable');
-      }
-      
       try {
         if (navigator.geolocation) {
-          console.log('[GEOLOCATION-DEBUG] Browser supports geolocation API');
+          console.log('[GEOLOCATION] Browser supports geolocation API');
           
-          // Log all available properties of the geolocation object
-          console.log('[GEOLOCATION-DEBUG] Geolocation object properties:', 
-            Object.getOwnPropertyNames(navigator.geolocation));
-          
-          // Simple location test with minimal options
-          console.log('[GEOLOCATION-DEBUG] Attempting basic location request first...');
+          // Try to get user location with reasonable options
           navigator.geolocation.getCurrentPosition(
             (position) => {
-              console.log('[GEOLOCATION-DEBUG] Basic location request succeeded!');
-              console.log('[GEOLOCATION-DEBUG] Position object keys:', Object.keys(position));
-              console.log('[GEOLOCATION-DEBUG] Coords object keys:', Object.keys(position.coords));
-              
               // Check if coordinates are valid
               if (position.coords.latitude === 0 && position.coords.longitude === 0) {
-                console.log('[GEOLOCATION-DEBUG] Warning: Received 0,0 coordinates, likely an error');
-                console.log('[GEOLOCATION-DEBUG] Using default location as fallback');
+                console.log('[GEOLOCATION] Warning: Received 0,0 coordinates, likely an error');
+                console.log('[GEOLOCATION] Using default location as fallback');
                 setUserLocation(defaultLocation);
                 return;
               }
@@ -125,105 +98,45 @@ export default function HomePage() {
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude
               };
-              console.log('[GEOLOCATION-DEBUG] Success! User coordinates:', userCoords);
-              console.log('[GEOLOCATION-DEBUG] Full position data:', {
-                accuracy: position.coords.accuracy,
-                altitude: position.coords.altitude,
-                altitudeAccuracy: position.coords.altitudeAccuracy,
-                heading: position.coords.heading,
-                speed: position.coords.speed,
-                timestamp: position.timestamp
-              });
+              console.log('[GEOLOCATION] Success! User coordinates obtained');
+              console.log('[GEOLOCATION] Accuracy:', position.coords.accuracy, 'meters');
               setUserLocation(userCoords);
             },
-            (basicError) => {
-              console.log('[GEOLOCATION-DEBUG] Basic location request failed with error code:', basicError.code);
-              console.log('[GEOLOCATION-DEBUG] Error message:', basicError.message);
-              console.log('[GEOLOCATION-DEBUG] Full error object:', basicError);
+            (error) => {
+              // Handle specific geolocation errors
+              let errorMessage = 'Unknown error';
+              switch(error.code) {
+                case error.PERMISSION_DENIED:
+                  errorMessage = 'User denied the request for geolocation';
+                  break;
+                case error.POSITION_UNAVAILABLE:
+                  errorMessage = 'Location information is unavailable';
+                  break;
+                case error.TIMEOUT:
+                  errorMessage = 'The request to get user location timed out';
+                  break;
+              }
+              console.log(`[GEOLOCATION] Error: ${errorMessage}. Error code: ${error.code}`);
               
-              // Try with high accuracy as a fallback
-              console.log('[GEOLOCATION-DEBUG] Trying with explicit options...');
-              navigator.geolocation.getCurrentPosition(
-                (position) => {
-                  // Check if coordinates are valid
-                  if (position.coords.latitude === 0 && position.coords.longitude === 0) {
-                    console.log('[GEOLOCATION-DEBUG] Warning: Received 0,0 coordinates, likely an error');
-                    console.log('[GEOLOCATION-DEBUG] Using default location as fallback');
-                    setUserLocation(defaultLocation);
-                    return;
-                  }
-                  
-                  const userCoords = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude
-                  };
-                  console.log('[GEOLOCATION-DEBUG] Success with high accuracy! User coordinates:', userCoords);
-                  console.log('[GEOLOCATION-DEBUG] Accuracy:', position.coords.accuracy, 'meters');
-                  setUserLocation(userCoords);
-                },
-                (highAccuracyError) => {
-                  console.log('[GEOLOCATION-DEBUG] High accuracy position failed with error code:', highAccuracyError.code);
-                  console.log('[GEOLOCATION-DEBUG] Error message:', highAccuracyError.message);
-                  
-                  // If high accuracy fails, try with low accuracy
-                  console.log('[GEOLOCATION-DEBUG] Trying with low accuracy...');
-                  navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                      const userCoords = {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude
-                      };
-                      console.log('[GEOLOCATION-DEBUG] Success with low accuracy! User coordinates:', userCoords);
-                      console.log('[GEOLOCATION-DEBUG] Accuracy:', position.coords.accuracy, 'meters');
-                      setUserLocation(userCoords);
-                    },
-                    (error) => {
-                      // Handle specific geolocation errors
-                      let errorMessage = 'Unknown error';
-                      switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                          errorMessage = 'User denied the request for geolocation';
-                          break;
-                        case error.POSITION_UNAVAILABLE:
-                          errorMessage = 'Location information is unavailable';
-                          break;
-                        case error.TIMEOUT:
-                          errorMessage = 'The request to get user location timed out';
-                          break;
-                      }
-                      console.log(`[GEOLOCATION-DEBUG] All attempts failed. Final error: ${errorMessage}. Error code: ${error.code}`);
-                      console.log('[GEOLOCATION-DEBUG] Error message:', error.message);
-                      
-                      // For kCLErrorLocationUnknown (POSITION_UNAVAILABLE), use default location
-                      console.log('[GEOLOCATION-DEBUG] Using default location as fallback for distance calculations');
-                      setUserLocation(defaultLocation);
-                    },
-                    { 
-                      timeout: 20000,         // 20 second timeout
-                      maximumAge: 300000,     // Accept cached positions up to 5 minutes old
-                      enableHighAccuracy: false  // Low accuracy mode
-                    }
-                  );
-                },
-                { 
-                  timeout: 10000,         // 10 second timeout
-                  maximumAge: 60000,     // Accept cached positions up to 1 minute old
-                  enableHighAccuracy: true  // Try high accuracy first
-                }
-              );
+              // Use default location for any error
+              console.log('[GEOLOCATION] Using default location as fallback for distance calculations');
+              setUserLocation(defaultLocation);
             },
-            // No options for basic request
-            {}
+            { 
+              timeout: 15000,         // 15 second timeout
+              maximumAge: 300000,     // Accept cached positions up to 5 minutes old
+              enableHighAccuracy: false  // Don't need high accuracy, saves battery
+            }
           );
-          console.log('[GEOLOCATION-DEBUG] Requests sent, waiting for results...');
+          console.log('[GEOLOCATION] Request sent, waiting for result...');
         } else {
-          console.log('[GEOLOCATION-DEBUG] Browser does not support geolocation API');
-          console.log('[GEOLOCATION-DEBUG] Using default location as fallback');
+          console.log('[GEOLOCATION] Browser does not support geolocation API');
+          console.log('[GEOLOCATION] Using default location as fallback');
           setUserLocation(defaultLocation);
         }
       } catch (err) {
-        console.log('[GEOLOCATION-DEBUG] Unexpected error:', err);
-        console.log('[GEOLOCATION-DEBUG] Using default location as fallback');
+        console.log('[GEOLOCATION] Unexpected error accessing geolocation');
+        console.log('[GEOLOCATION] Using default location as fallback');
         setUserLocation(defaultLocation);
       }
     };
