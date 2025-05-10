@@ -49,13 +49,27 @@ export function useEntityRelationships(projects: Project[]) {
     let isMounted = true;
     
     const fetchAllRelationships = async () => {
+      // Set a timeout to prevent the operation from hanging indefinitely
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('[Relationships] Timeout reached while fetching relationships'));
+        }, 10000); // 10 second timeout
+      });
+      
       try {
         console.log('[Relationships] Fetching all project relationships from Supabase...');
         
-        const { data: projectData, error } = await supabase
+        // Race the fetch operation against the timeout
+        const fetchPromise = supabase
           .from('podio_data')
           .select('ahj_item_id, utility_company_item_id');
           
+        // Use Promise.race to either get the data or timeout
+        const { data: projectData, error } = await Promise.race([
+          fetchPromise,
+          timeoutPromise
+        ]) as any;
+        
         if (error) {
           console.error('Error fetching project relationship data:', error);
           return;
@@ -99,6 +113,17 @@ export function useEntityRelationships(projects: Project[]) {
         setUtilityToAhjMap(newUtilityToAhjMap);
       } catch (err) {
         console.error('Error processing project relationships:', err);
+        
+        // Even if there's an error, ensure we have valid maps to prevent UI issues
+        if (isMounted) {
+          // Initialize empty maps if we haven't already
+          if (ahjToUtilityMap.size === 0) {
+            setAhjToUtilityMap(new Map());
+          }
+          if (utilityToAhjMap.size === 0) {
+            setUtilityToAhjMap(new Map());
+          }
+        }
       }
     };
     

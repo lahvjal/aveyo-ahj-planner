@@ -19,11 +19,22 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
     const fetchData = async () => {
       console.log('Fetching project data...');
       setIsLoading(true);
+      
+      // Set a timeout to ensure loading state doesn't get stuck
+      const timeoutId = setTimeout(() => {
+        console.warn('Data fetching timeout reached - resetting loading state');
+        setIsLoading(false);
+        setError('Data fetching timeout reached. Please refresh the page.');
+      }, 15000); // 15 second timeout
+      
       try {
         // Fetch podio_data (projects)
         const { data, error } = await supabase
           .from('podio_data')
           .select('*');
+        
+        // Clear the timeout since we got a response
+        clearTimeout(timeoutId);
         
         console.log('Fetched podio_data:', data?.length || 0, 'records');
         
@@ -32,10 +43,32 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
           throw error;
         }
         
-        // Fetch related data (similar to AHJ fetching pattern)
-        const ahjRes = await supabase.from('ahj').select('*');
-        const utilityRes = await supabase.from('utility').select('*');
-        const financierRes = await supabase.from('financier').select('*');
+        // Fetch related data with error handling for each request
+        let ahjRes, utilityRes, financierRes;
+        
+        try {
+          ahjRes = await supabase.from('ahj').select('*');
+          if (ahjRes.error) throw new Error(`Error fetching AHJ data: ${ahjRes.error.message}`);
+        } catch (err) {
+          console.error('Error fetching AHJ data:', err);
+          ahjRes = { data: [] };
+        }
+        
+        try {
+          utilityRes = await supabase.from('utility').select('*');
+          if (utilityRes.error) throw new Error(`Error fetching utility data: ${utilityRes.error.message}`);
+        } catch (err) {
+          console.error('Error fetching utility data:', err);
+          utilityRes = { data: [] };
+        }
+        
+        try {
+          financierRes = await supabase.from('financier').select('*');
+          if (financierRes.error) throw new Error(`Error fetching financier data: ${financierRes.error.message}`);
+        } catch (err) {
+          console.error('Error fetching financier data:', err);
+          financierRes = { data: [] };
+        }
         
         // Log the structure of the first items to debug
         if (ahjRes.data && ahjRes.data.length > 0) {
@@ -165,10 +198,15 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
         console.log('Transformed data:', transformedData.length, 'projects');
         setProjects(transformedData);
         setFilteredProjects(transformedData);
-      } catch (error) {
-        console.error('Error in useProjects hook:', error);
-        setError('Failed to load project data. Please try again later.');
+      } catch (err: any) {
+        console.error('Error fetching project data:', err);
+        setError(err.message || 'An error occurred while fetching project data');
+        
+        // Even if there's an error, set projects to an empty array to avoid undefined errors
+        setProjects([]);
+        setFilteredProjects([]);
       } finally {
+        // Always set loading to false to prevent UI from getting stuck
         setIsLoading(false);
       }
     };

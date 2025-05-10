@@ -193,12 +193,25 @@ export default function HomePage() {
         {/* Main content area - takes remaining space */}
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {error ? (
-            <div className="p-4 bg-red-900/50 border border-red-700 rounded-md m-4">
-              <p>Error loading projects: {error}</p>
+            <div className="p-4 bg-red-900/50 border border-red-700 rounded-md m-4 flex flex-col items-center">
+              <p className="mb-4">Error loading projects: {error}</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              >
+                Retry
+              </button>
             </div>
           ) : isLoading ? (
-            <div className="flex justify-center items-center h-full">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+            <div className="flex flex-col justify-center items-center h-full">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+              <p className="text-gray-400">Loading projects...</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="mt-8 px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
+              >
+                Refresh if stuck
+              </button>
             </div>
           ) : (
             <>
