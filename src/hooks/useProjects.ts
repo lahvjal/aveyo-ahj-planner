@@ -82,16 +82,23 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
           // Extract location data from raw payload
           const address = `${raw.address || ''}, ${raw.city || ''}, ${raw.state || ''} ${raw.zip || ''}`.trim();
           
-          // Check if the raw payload has coordinates
-          let lat, lng;
+          // Extract coordinates from raw data
+          let lat: number | undefined = undefined;
+          let lng: number | undefined = undefined;
+          
+          // Only set coordinates if they are valid
           if (raw.latitude && raw.longitude) {
-            lat = parseFloat(raw.latitude);
-            lng = parseFloat(raw.longitude);
-          } else {
-            // Always provide coordinates for map display
-            // Illinois coordinates as fallback (since example shows IL)
-            lat = 38 + Math.random() * 4; // Approximate Illinois latitude
-            lng = -90 - Math.random() * 4; // Approximate Illinois longitude
+            const parsedLat = parseFloat(raw.latitude);
+            const parsedLng = parseFloat(raw.longitude);
+            
+            // Validate coordinates
+            if (!isNaN(parsedLat) && !isNaN(parsedLng) && 
+                parsedLat !== 0 && parsedLng !== 0 && 
+                parsedLat >= -90 && parsedLat <= 90 && 
+                parsedLng >= -180 && parsedLng <= 180) {
+              lat = parsedLat;
+              lng = parsedLng;
+            }
           }
           
           // Check if project should be masked based on status and user role
@@ -234,26 +241,59 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
       });
     }
     
-    // Then apply classification filters
+    // Apply filters
     if (filters.length > 0) {
       filtered = filtered.filter(project => {
-        // Group filters by type
-        const ahjFilters = filters.filter(f => f.type === 'ahj').map(f => f.value);
-        const utilityFilters = filters.filter(f => f.type === 'utility').map(f => f.value);
-        const financierFilters = filters.filter(f => f.type === 'financier').map(f => f.value);
-        const myProjectsFilter = filters.some(f => f.type === 'myprojects' && f.value === 'true');
+        // Separate entity-selection filters from classification filters
+        const entitySelectionFilters = filters.filter(f => f.filterSource === 'entity-selection');
+        const classificationFilters = filters.filter(f => f.filterSource !== 'entity-selection');
         
-        // If there are no filters of a specific type, consider it a match
-        const ahjMatch = ahjFilters.length === 0 || ahjFilters.includes(project.ahj.classification);
-        const utilityMatch = utilityFilters.length === 0 || (project.utility.classification && utilityFilters.includes(project.utility.classification));
-        const financierMatch = financierFilters.length === 0 || (project.financier.classification && financierFilters.includes(project.financier.classification));
+        // Handle entity-selection filters first
+        if (entitySelectionFilters.length > 0) {
+          // Check if any entity-selection filter matches this project
+          const ahjEntityFilter = entitySelectionFilters.find(f => f.type === 'ahj');
+          const utilityEntityFilter = entitySelectionFilters.find(f => f.type === 'utility');
+          
+          // If we have an AHJ entity filter, check if the project has that AHJ
+          if (ahjEntityFilter && ahjEntityFilter.entityId) {
+            if (project.ahj.id !== ahjEntityFilter.entityId) {
+              return false; // Project doesn't have the selected AHJ
+            }
+          }
+          
+          // If we have a utility entity filter, check if the project has that utility
+          if (utilityEntityFilter && utilityEntityFilter.entityId) {
+            if (project.utility.id !== utilityEntityFilter.entityId) {
+              return false; // Project doesn't have the selected utility
+            }
+          }
+        }
         
-        // For "my projects" filter, only match if both rep_id values are non-null and equal
-        const myProjectsMatch = !myProjectsFilter || 
-          (project.rep_id && userProfile?.rep_id && project.rep_id === userProfile.rep_id);
+        // Then apply regular classification filters
+        if (classificationFilters.length > 0) {
+          // Group filters by type
+          const ahjFilters = classificationFilters.filter(f => f.type === 'ahj').map(f => f.value);
+          const utilityFilters = classificationFilters.filter(f => f.type === 'utility').map(f => f.value);
+          const financierFilters = classificationFilters.filter(f => f.type === 'financier').map(f => f.value);
+          const myProjectsFilter = classificationFilters.some(f => f.type === 'myprojects' && f.value === 'true');
+          
+          // If there are no filters of a specific type, consider it a match
+          const ahjMatch = ahjFilters.length === 0 || ahjFilters.includes(project.ahj.classification);
+          const utilityMatch = utilityFilters.length === 0 || (project.utility.classification && utilityFilters.includes(project.utility.classification));
+          const financierMatch = financierFilters.length === 0 || (project.financier.classification && financierFilters.includes(project.financier.classification));
+          
+          // For "my projects" filter, only match if both rep_id values are non-null and equal
+          const myProjectsMatch = !myProjectsFilter || 
+            (project.rep_id && userProfile?.rep_id && project.rep_id === userProfile.rep_id);
+          
+          // If any classification filter doesn't match, exclude the project
+          if (!(ahjMatch && utilityMatch && financierMatch && myProjectsMatch)) {
+            return false;
+          }
+        }
         
-        // Project matches if it matches all filter types
-        return ahjMatch && utilityMatch && financierMatch && myProjectsMatch;
+        // If we've made it this far, the project matches all filters
+        return true;
       });
     }
     

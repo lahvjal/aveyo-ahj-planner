@@ -1,65 +1,92 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FiMapPin } from 'react-icons/fi';
-import { Project } from '@/utils/types';
-import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import { Project, ProjectFilter } from '@/utils/types';
 import { useEntities, EntityData } from '@/hooks/useEntities';
-
-/**
- * Format distance in a user-friendly way
- * - Less than 0.1 miles: "< 0.1 miles"
- * - Less than 1 mile: "0.x miles" (1 decimal place)
- * - 1-10 miles: "x.x miles" (1 decimal place)
- * - Over 10 miles: "xx miles" (rounded to nearest mile)
- * - Over 100 miles: "xxx miles" (rounded to nearest 5 miles)
- */
-function formatDistance(distance?: number): string {
-  if (distance === undefined || distance === null) {
-    return 'N/A';
-  }
-  
-  if (distance === Number.MAX_VALUE || distance === Infinity) {
-    return 'Unknown';
-  }
-  
-  if (distance < 0.1) {
-    return '< 0.1 mi';
-  } else if (distance < 1) {
-    return `${distance.toFixed(1)} mi`;
-  } else if (distance < 10) {
-    return `${distance.toFixed(1)} mi`;
-  } else if (distance < 100) {
-    return `${Math.round(distance)} mi`;
-  } else {
-    // Round to nearest 5 miles for distances over 100 miles
-    return `${Math.round(distance / 5) * 5} mi`;
-  }
-}
-
-// Local interface for entity data with projects
-interface LocalEntityData extends EntityData {
-  projects: Project[];
-}
+import { useEntityRelationships } from '@/hooks/useEntityRelationships';
+import EntityListItem from './EntityListItem';
+import { formatDistance } from '@/utils/formatters';
+import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import EmptyState from './EmptyState';
 
 interface EntityListViewProps {
   projects: Project[];
   userLocation?: { latitude: number; longitude: number } | null;
   onViewOnMap: (entityName: string, entityType: 'ahj' | 'utility') => void;
-  onAddFilter: (type: 'ahj' | 'utility', value: string) => void;
+  onAddFilter: (filter: ProjectFilter) => void;
+  filters?: ProjectFilter[]; // Add filters prop to receive active filters
 }
 
 const EntityListView: React.FC<EntityListViewProps> = ({
   projects,
   userLocation,
   onViewOnMap,
-  onAddFilter
+  onAddFilter,
+  filters = []
 }) => {
-  const [activeTab, setActiveTab] = useState<'ahj' | 'utility'>('ahj');
-  const [visibleItems, setVisibleItems] = useState<EntityData[]>([]);
-  const [loadedCount, setLoadedCount] = useState(20);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // We no longer need direct selection state variables as we're using filter panel exclusively
   
-  // Use the entities hook to fetch AHJ and Utility data directly from Supabase
+  // State for loaded items count (for infinite scrolling)
+  const [ahjLoadedCount, setAhjLoadedCount] = useState(20);
+  const [utilityLoadedCount, setUtilityLoadedCount] = useState(20);
+  
+  // Scroll container refs for both lists
+  const ahjScrollContainerRef = useRef<HTMLDivElement>(null);
+  const utilityScrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Use the entities hook to fetch ALL AHJ and Utility data directly from Supabase
+  // This ensures we get all entities regardless of project filters
+  // We'll use this data for the relationship filtering
   const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
+  
+  // Use the entity relationships hook to track connections between AHJs and Utilities
+  // We pass ALL projects to ensure we have complete relationship data
+  const { getRelatedUtilities, getRelatedAhjs } = useEntityRelationships(projects);
+  
+  // Helper functions to identify entities that match active filters
+  const getHighlightedAhjId = useMemo(() => {
+    // Look for entity-selection filters or manual filters of type 'ahj'
+    const ahjFilter = filters.find(f => f.type === 'ahj');
+    if (ahjFilter) {
+      // If it's an entity-selection filter, use the entityId
+      if (ahjFilter.filterSource === 'entity-selection' && ahjFilter.entityId) {
+        return ahjFilter.entityId;
+      }
+      // For manual filters, find the AHJ by name
+      const matchingAhj = ahjs.find(ahj => ahj.name === ahjFilter.value);
+      return matchingAhj?.id || null;
+    }
+    return null;
+  }, [filters, ahjs]);
+
+  const getHighlightedUtilityId = useMemo(() => {
+    // Look for entity-selection filters or manual filters of type 'utility'
+    const utilityFilter = filters.find(f => f.type === 'utility');
+    if (utilityFilter) {
+      // If it's an entity-selection filter, use the entityId
+      if (utilityFilter.filterSource === 'entity-selection' && utilityFilter.entityId) {
+        return utilityFilter.entityId;
+      }
+      // For manual filters, find the utility by name
+      const matchingUtility = utilities.find(utility => utility.name === utilityFilter.value);
+      return matchingUtility?.id || null;
+    }
+    return null;
+  }, [filters, utilities]);
+  
+  // Log relationship status for debugging
+  useEffect(() => {
+    console.log(`[EntityListView] Using relationships from ${projects.length} projects`);
+    
+    // Log highlighted entities from filters
+    if (getHighlightedAhjId) {
+      const relatedUtilities = getRelatedUtilities(getHighlightedAhjId);
+      console.log(`[EntityListView] Highlighted AHJ ${getHighlightedAhjId} has ${relatedUtilities?.size || 0} related utilities`);
+    }
+    if (getHighlightedUtilityId) {
+      const relatedAhjs = getRelatedAhjs(getHighlightedUtilityId);
+      console.log(`[EntityListView] Highlighted Utility ${getHighlightedUtilityId} has ${relatedAhjs?.size || 0} related AHJs`);
+    }
+  }, [projects, getRelatedUtilities, getRelatedAhjs, getHighlightedAhjId, getHighlightedUtilityId]);
 
   // Update distances when user location changes
   // Using a ref to track previous location to avoid unnecessary calculations
@@ -79,167 +106,250 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     }
   }, [userLocation, calculateDistances]);
   
-  // Get the current entities based on the active tab
-  const currentEntities = activeTab === 'ahj' ? ahjs : utilities;
+  // Filter utilities based on highlighted AHJ from filters
+  const filteredUtilities = useMemo(() => {
+    // Use highlighted AHJ from filters
+    const targetAhjId = getHighlightedAhjId;
+    
+    if (!targetAhjId) return utilities; // Show all utilities if no AHJ is highlighted
+    
+    const relatedUtilityIds = getRelatedUtilities(targetAhjId);
+    if (!relatedUtilityIds || relatedUtilityIds.size === 0) return [];
+    
+    // Filter utilities by related IDs, regardless of project filters
+    return utilities.filter(utility => relatedUtilityIds.has(utility.id));
+  }, [utilities, getHighlightedAhjId, getRelatedUtilities]);
   
-  // Map projects to entities for the "View on Map" functionality
-  const entitiesWithProjects = useMemo(() => {
-    // If currentEntities is not yet loaded, return an empty array
-    if (!currentEntities || currentEntities.length === 0) {
-      return [];
-    }
+  // Filter AHJs based on highlighted utility from filters
+  const filteredAhjs = useMemo(() => {
+    // Use highlighted utility from filters
+    const targetUtilityId = getHighlightedUtilityId;
     
-    const projectMap = new Map<string, Project[]>();
+    if (!targetUtilityId) return ahjs; // Show all AHJs if no utility is highlighted
     
-    // Group projects by entity ID
-    projects.forEach(project => {
-      const entityData = activeTab === 'ahj' ? project.ahj : project.utility;
-      const entityId = entityData?.id;
-      if (!entityId) return;
+    const relatedAhjIds = getRelatedAhjs(targetUtilityId);
+    if (!relatedAhjIds || relatedAhjIds.size === 0) return [];
+    
+    // Filter AHJs by related IDs, regardless of project filters
+    return ahjs.filter(ahj => relatedAhjIds.has(ahj.id));
+  }, [ahjs, getHighlightedUtilityId, getRelatedAhjs]);
+  
+  // Visible items for both lists (with pagination)
+  const visibleAhjs = useMemo(() => {
+    return filteredAhjs.slice(0, ahjLoadedCount);
+  }, [filteredAhjs, ahjLoadedCount]);
+  
+  const visibleUtilities = useMemo(() => {
+    return filteredUtilities.slice(0, utilityLoadedCount);
+  }, [filteredUtilities, utilityLoadedCount]);
+  
+  // Handle entity selection - now only adds/removes filters in the panel
+  const handleAhjSelect = (ahj: EntityData) => {
+    // Check if this entity is already highlighted via a filter
+    const isAlreadyFiltered = getHighlightedAhjId === ahj.id;
+    
+    // We no longer manage direct selection state, only filter panel filters
+    if (isAlreadyFiltered) {
+      // If already filtered, remove the filter
+      const existingFilter = filters.find(f => 
+        f.type === 'ahj' && 
+        f.filterSource === 'entity-selection' && 
+        f.entityId === ahj.id
+      );
       
-      if (projectMap.has(entityId)) {
-        projectMap.get(entityId)!.push(project);
-      } else {
-        projectMap.set(entityId, [project]);
+      if (existingFilter) {
+        // Signal to remove the filter
+        onAddFilter({
+          type: 'ahj',
+          value: ahj.name,
+          filterSource: 'entity-selection',
+          entityId: ahj.id,
+        });
+        console.log(`[EntityListView] Deselected AHJ ${ahj.id}, removing filter`);
       }
-    });
-    
-    // Add projects to entities
-    return currentEntities.map(entity => ({
-      ...entity,
-      projects: projectMap.get(entity.id) || []
-    }));
-  }, [projects, currentEntities, activeTab]);
-
-  // Debugging log - removed to prevent console spam
-  /*
-  useEffect(() => {
-    if (entitiesWithProjects) {
-      console.log({
-        loadedCount,
-        isLoading,
-        entitiesLength: entitiesWithProjects.length
-      });
-    }
-  }, [loadedCount, isLoading, entitiesWithProjects]);
-  */
-
-  // Load more items when scrolling
-  useEffect(() => {
-    if (entitiesWithProjects && entitiesWithProjects.length > 0) {
-      setVisibleItems(entitiesWithProjects.slice(0, loadedCount));
     } else {
-      setVisibleItems([]);
+      // If selecting, add an entity-selection filter
+      onAddFilter({
+        type: 'ahj',
+        value: ahj.name,
+        filterSource: 'entity-selection',
+        entityId: ahj.id,
+        metadata: {
+          latitude: ahj.latitude,
+          longitude: ahj.longitude,
+          classification: ahj.classification
+        }
+      });
+      console.log(`[EntityListView] Selected AHJ ${ahj.id}, added filter`);
     }
-  }, [entitiesWithProjects, loadedCount]);
+  };
   
-  // Handle scroll event to load more items
+  const handleUtilitySelect = (utility: EntityData) => {
+    // Check if this entity is already highlighted via a filter
+    const isAlreadyFiltered = getHighlightedUtilityId === utility.id;
+    
+    // We no longer manage direct selection state, only filter panel filters
+    if (isAlreadyFiltered) {
+      // If already filtered, remove the filter
+      const existingFilter = filters.find(f => 
+        f.type === 'utility' && 
+        f.filterSource === 'entity-selection' && 
+        f.entityId === utility.id
+      );
+      
+      if (existingFilter) {
+        // Signal to remove the filter
+        onAddFilter({
+          type: 'utility',
+          value: utility.name,
+          filterSource: 'entity-selection',
+          entityId: utility.id,
+        });
+        console.log(`[EntityListView] Deselected Utility ${utility.id}, removing filter`);
+      }
+    } else {
+      // If selecting, add an entity-selection filter
+      onAddFilter({
+        type: 'utility',
+        value: utility.name,
+        filterSource: 'entity-selection',
+        entityId: utility.id,
+        metadata: {
+          latitude: utility.latitude,
+          longitude: utility.longitude,
+          classification: utility.classification
+        }
+      });
+      console.log(`[EntityListView] Selected Utility ${utility.id}, added filter`);
+    }
+  };
+  
+  // Handle scroll event for AHJ list
   useEffect(() => {
     const handleScroll = () => {
-      if (!scrollContainerRef.current || isLoading) return;
+      if (!ahjScrollContainerRef.current || isLoading) return;
       
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const { scrollTop, scrollHeight, clientHeight } = ahjScrollContainerRef.current;
       
       // If scrolled near the bottom, load more items
       if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (entitiesWithProjects && loadedCount < entitiesWithProjects.length) {
-          // Load more items
-          setTimeout(() => {
-            setLoadedCount(prev => Math.min(prev + 10, entitiesWithProjects.length));
-          }, 200);
+        if (filteredAhjs.length > ahjLoadedCount) {
+          setAhjLoadedCount(prev => Math.min(prev + 10, filteredAhjs.length));
         }
       }
     };
     
-    const currentContainer = scrollContainerRef.current;
-    if (currentContainer) {
-      currentContainer.addEventListener('scroll', handleScroll);
+    const container = ahjScrollContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      
+      // Initial check
+      setTimeout(handleScroll, 100);
     }
     
     return () => {
-      if (currentContainer) {
-        currentContainer.removeEventListener('scroll', handleScroll);
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [loadedCount, isLoading]); // Remove entitiesWithProjects.length from dependencies
+  }, [ahjLoadedCount, isLoading, filteredAhjs]);
   
-  // Reset loaded count when entities change
+  // Handle scroll event for Utility list
   useEffect(() => {
-    setLoadedCount(20);
-  }, [activeTab]); // Only reset when tab changes, not when entities change
+    const handleScroll = () => {
+      if (!utilityScrollContainerRef.current || isLoading) return;
+      
+      const { scrollTop, scrollHeight, clientHeight } = utilityScrollContainerRef.current;
+      
+      // If scrolled near the bottom, load more items
+      if (scrollHeight - scrollTop - clientHeight < 200) {
+        if (filteredUtilities.length > utilityLoadedCount) {
+          setUtilityLoadedCount(prev => Math.min(prev + 10, filteredUtilities.length));
+        }
+      }
+    };
+    
+    const container = utilityScrollContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      
+      // Initial check
+      setTimeout(handleScroll, 100);
+    }
+    
+    return () => {
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, [utilityLoadedCount, isLoading, filteredUtilities]);
   
   // Set a fixed height style to ensure the table fills the available space
   useEffect(() => {
     const updateTableHeight = () => {
-      if (!scrollContainerRef.current) return;
+      if (!ahjScrollContainerRef.current || !utilityScrollContainerRef.current) return;
       
       // Get viewport height
       const viewportHeight = window.innerHeight;
       
       // Get container's position from the top of the viewport
-      const containerRect = scrollContainerRef.current.getBoundingClientRect();
-      const containerTop = containerRect.top;
+      const ahjContainerRect = ahjScrollContainerRef.current.getBoundingClientRect();
+      const containerTop = ahjContainerRect.top;
       
       // Calculate available height (viewport height minus container top position minus footer space)
-      // The 40px accounts for some bottom margin
-      const availableHeight = viewportHeight - containerTop - 40;
+      const bottomMargin = 40;
+      const availableHeight = viewportHeight - containerTop - bottomMargin;
       
-      // Apply the height to the container
-      scrollContainerRef.current.style.height = `${availableHeight}px`;
+      // Apply the height to both containers - ensure minimum height of 400px
+      const finalHeight = Math.max(400, availableHeight);
+      
+      ahjScrollContainerRef.current.style.height = `${finalHeight}px`;
+      ahjScrollContainerRef.current.style.overflowY = 'auto';
+      
+      utilityScrollContainerRef.current.style.height = `${finalHeight}px`;
+      utilityScrollContainerRef.current.style.overflowY = 'auto';
     };
     
-    // Initial update
-    updateTableHeight();
+    // Initial update with a delay to ensure DOM is fully rendered
+    const initialTimer = setTimeout(updateTableHeight, 200);
+    
+    // Run a second time after a longer delay to handle any layout shifts
+    const secondTimer = setTimeout(updateTableHeight, 500);
     
     // Update on resize
     window.addEventListener('resize', updateTableHeight);
     
     return () => {
+      clearTimeout(initialTimer);
+      clearTimeout(secondTimer);
       window.removeEventListener('resize', updateTableHeight);
     };
   }, []);
-
-  return (
-    <div className="w-full h-full flex flex-col">
-      <h2 className="text-xl font-bold text-white mb-4">AHJ & UTILITY</h2>
-      
-      {/* Tab navigation */}
-      <div className="flex mb-4">
-        <button
-          className={`px-4 py-2 text-sm font-medium rounded-t-md ${
-            activeTab === 'ahj' 
-              ? 'bg-blue-500 text-white' 
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-          onClick={() => setActiveTab('ahj')}
-        >
-          AHJ
-        </button>
-        <button
-          className={`px-4 py-2 text-sm font-medium rounded-t-md ml-2 ${
-            activeTab === 'utility' 
-              ? 'bg-blue-500 text-white' 
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-          onClick={() => setActiveTab('utility')}
-        >
-          UTILITY
-        </button>
-      </div>
-      
-      {/* Entity list table */}
-      <div className="rounded-md border border-[#333333] flex-1 h-full flex flex-col">
+  
+  // Render a single entity list (AHJ or Utility)
+  const renderEntityList = (entityType: 'ahj' | 'utility') => {
+    const isAhj = entityType === 'ahj';
+    const entities = isAhj ? visibleAhjs : visibleUtilities;
+    // We no longer use direct selection, only highlighted entities from filters
+    const highlightedId = isAhj ? getHighlightedAhjId : getHighlightedUtilityId;
+    const handleSelect = isAhj ? handleAhjSelect : handleUtilitySelect;
+    const scrollRef = isAhj ? ahjScrollContainerRef : utilityScrollContainerRef;
+    const totalCount = isAhj ? filteredAhjs.length : filteredUtilities.length;
+    const loadedCount = isAhj ? ahjLoadedCount : utilityLoadedCount;
+    
+    return (
+      <div className="h-full flex flex-col">
         {/* Table header */}
         <div className="bg-[#1e1e1e] sticky top-0 z-10">
           <div className="grid grid-cols-5 divide-x divide-[#333333]">
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-              {activeTab.toUpperCase()}
+              {entityType.toUpperCase()}
             </div>
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
               NO. PROJ
             </div>
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-              CLASSIFICATION
+              CLASS
             </div>
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
               DISTANCE
@@ -252,56 +362,38 @@ const EntityListView: React.FC<EntityListViewProps> = ({
         
         {/* Table body - scrollable */}
         <div 
-          className="flex-1 overflow-auto bg-[#121212] scroll-smooth" 
-          ref={scrollContainerRef}
+          className="overflow-y-auto bg-[#121212] scroll-smooth" 
+          ref={scrollRef}
+          style={{ minHeight: '400px', display: 'block' }}
         >
           {isLoading ? (
             <div className="px-6 py-4 text-center text-gray-400">
-              Loading {activeTab === 'ahj' ? 'AHJs' : 'utilities'}...
+              Loading {entityType === 'ahj' ? 'AHJs' : 'utilities'}...
             </div>
           ) : error ? (
             <div className="px-6 py-4 text-center text-red-400">
               Error: {error}
             </div>
-          ) : visibleItems.length === 0 ? (
+          ) : entities.length === 0 ? (
             <div className="px-6 py-4 text-center text-gray-400">
-              No {activeTab === 'ahj' ? 'AHJs' : 'utilities'} found
+              {highlightedId ? 
+                `No ${entityType === 'ahj' ? 'AHJs' : 'utilities'} related to the highlighted ${entityType === 'ahj' ? 'utility' : 'AHJ'}.` :
+                `No ${entityType === 'ahj' ? 'AHJs' : 'utilities'} found.`
+              }
+              {/* Clear Selection button removed as we now use filter panel exclusively */}
             </div>
           ) : (
             <div className="divide-y divide-[#333333]">
-              {visibleItems.map((entity, index) => (
-                <div 
-                  key={`${entity.name}-${index}`}
-                  className="grid grid-cols-5 hover:bg-[#1e1e1e] cursor-pointer"
-                  onClick={() => onAddFilter(activeTab, entity.name)}
-                >
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    <span className="truncate block">{entity.name}</span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    <span className="truncate block">{entity.projectCount}</span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(entity.classification)}`}>
-                      {entity.classification || 'Unknown'}
-                    </span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    <span className="truncate block">{formatDistance(entity.distance)}</span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onViewOnMap(entity.name, activeTab);
-                      }}
-                      className="text-gray-300 hover:text-white flex items-center justify-end"
-                    >
-                      <FiMapPin className="mr-1" />
-                      View On Map
-                    </button>
-                  </div>
-                </div>
+              {entities.map((entity) => (
+                <EntityListItem
+                  key={entity.id}
+                  entity={entity}
+                  isSelected={false} // No longer using direct selection
+                  isHighlighted={entity.id === highlightedId}
+                  onSelect={handleSelect}
+                  onViewOnMap={onViewOnMap}
+                  entityType={entityType}
+                />
               ))}
               
               {/* Loading indicator */}
@@ -312,15 +404,75 @@ const EntityListView: React.FC<EntityListViewProps> = ({
               )}
               
               {/* End of list indicator */}
-              {!isLoading && loadedCount >= entitiesWithProjects.length && entitiesWithProjects.length > 0 && (
+              {!isLoading && loadedCount >= totalCount && totalCount > 0 && (
                 <div className="py-4 text-center text-gray-500 text-sm">
-                  Showing all {entitiesWithProjects.length} {activeTab === 'ahj' ? 'AHJs' : 'utilities'}
+                  Showing all {totalCount} {entityType === 'ahj' ? 'AHJs' : 'utilities'}
                 </div>
               )}
             </div>
           )}
         </div>
       </div>
+    );
+  };
+
+  // Render the main component with side-by-side AHJ and Utility lists
+  return (
+    <div className="w-full h-full flex flex-col">
+      <h2 className="text-xl font-bold text-white mb-4">AHJ & UTILITY</h2>
+      
+      {/* Side-by-side entity lists */}
+      <div className="grid grid-cols-2 gap-4 flex-1">
+        {/* AHJ List */}
+        <div className="rounded-md border border-[#333333] flex-1 h-full">
+          {renderEntityList('ahj')}
+        </div>
+        
+        {/* Utility List */}
+        <div className="rounded-md border border-[#333333] flex-1 h-full">
+          {renderEntityList('utility')}
+        </div>
+      </div>
+      
+      {/* Selection status and clear button - now based on filter panel filters */}
+      {(getHighlightedAhjId || getHighlightedUtilityId) && (
+        <div className="mt-4 p-2 bg-[#1e1e1e] rounded-md text-sm text-gray-300">
+          {getHighlightedAhjId && (
+            <p>Showing utilities that have projects with the highlighted AHJ</p>
+          )}
+          {getHighlightedUtilityId && (
+            <p>Showing AHJs that have projects with the highlighted utility</p>
+          )}
+          <div className="flex mt-2">
+            <button 
+              onClick={() => {
+                // Clear any highlighted entities by removing their filters
+                const ahjFilter = filters.find(f => f.type === 'ahj' && f.filterSource === 'entity-selection');
+                const utilityFilter = filters.find(f => f.type === 'utility' && f.filterSource === 'entity-selection');
+                
+                // If we have an AHJ filter and we can find the entity, remove it
+                if (ahjFilter && ahjFilter.entityId) {
+                  const highlightedEntity = ahjs.find(a => a.id === ahjFilter.entityId);
+                  if (highlightedEntity) {
+                    handleAhjSelect(highlightedEntity); // This will toggle/deselect
+                  }
+                }
+                
+                // If we have a utility filter and we can find the entity, remove it
+                if (utilityFilter && utilityFilter.entityId) {
+                  const highlightedEntity = utilities.find(u => u.id === utilityFilter.entityId);
+                  if (highlightedEntity) {
+                    handleUtilitySelect(highlightedEntity); // This will toggle/deselect
+                  }
+                }
+              }}
+              className="text-blue-400 hover:text-blue-300 text-xs"
+            >
+              Clear Selection
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

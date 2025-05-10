@@ -13,6 +13,8 @@ interface DualListViewProps {
   sortField?: string;
   sortDirection?: 'asc' | 'desc';
   onAddFilter: (filter: ProjectFilter) => void;
+  onRemoveFilter: (filter: ProjectFilter) => void;
+  filters: ProjectFilter[];
   userLocation?: { latitude: number; longitude: number } | null;
   showOnlyMyProjects?: boolean;
 }
@@ -26,6 +28,8 @@ const DualListView: React.FC<DualListViewProps> = ({
   sortField,
   sortDirection,
   onAddFilter,
+  onRemoveFilter,
+  filters,
   userLocation,
   showOnlyMyProjects = false
 }) => {
@@ -76,9 +80,35 @@ const DualListView: React.FC<DualListViewProps> = ({
     }
   };
 
-  // Handle adding a filter when clicking on an entity
-  const handleAddEntityFilter = (type: 'ahj' | 'utility', value: string) => {
-    onAddFilter({ type, value });
+  /**
+   * Handle adding or removing a filter from entity selection
+   * This function receives an enhanced ProjectFilter object with entity metadata
+   * from the EntityListView component
+   * 
+   * If the filter has entityId and the user is deselecting an entity,
+   * we need to find and remove any existing entity-selection filter for that entity
+   */
+  const handleEntityFilter = (filter: ProjectFilter) => {
+    // If this is a deselection (no filter provided but just logging), find and remove the entity filter
+    if (filter.filterSource === 'entity-selection' && Array.isArray(filters)) {
+      // Check if we already have an entity-selection filter for this entity
+      const existingFilter = filters.find(f => 
+        f && f.filterSource === 'entity-selection' && 
+        f.type === filter.type && 
+        f.entityId === filter.entityId
+      );
+      
+      if (existingFilter) {
+        // If we already have a filter for this entity, remove it
+        console.log(`[DualListView] Removing existing entity filter for ${filter.type} ${filter.entityId}`);
+        onRemoveFilter(existingFilter);
+        return;
+      }
+    }
+    
+    // Otherwise, add the new filter
+    console.log(`[DualListView] Adding entity filter for ${filter.type} ${filter.value}`);
+    onAddFilter(filter);
   };
 
   return (
@@ -123,7 +153,8 @@ const DualListView: React.FC<DualListViewProps> = ({
           projects={projects}
           userLocation={userLocation}
           onViewOnMap={handleEntityViewOnMap}
-          onAddFilter={handleAddEntityFilter}
+          onAddFilter={handleEntityFilter}
+          filters={filters}
         />
       )}
     </div>

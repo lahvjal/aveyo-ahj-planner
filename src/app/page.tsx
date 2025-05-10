@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import MapView from '@/components/MapView';
 import DualListView from '@/components/DualListView';
 import ImprovedFilterPanel from '@/components/ImprovedFilterPanel';
+import EmptyState from '@/components/EmptyState';
 import { useProjects } from '@/hooks/useProjects';
-import { Project, ProjectFilter, PredictionResult } from '@/utils/types';
+import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
-import { FiMap, FiList, FiAlertCircle } from 'react-icons/fi';
+import { FiMap, FiList } from 'react-icons/fi';
 
 export default function HomePage() {
   const router = useRouter();
@@ -163,16 +164,8 @@ export default function HomePage() {
     );
   }
 
-  // Component for empty state message
-  const EmptyStateMessage = () => (
-    <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-      <FiAlertCircle className="text-yellow-500 text-5xl mb-4" />
-      <h2 className="text-xl font-semibold mb-2">No Projects Available</h2>
-      <p className="text-gray-400 max-w-md">
-        There are currently no projects in the database. Projects will appear here once data is loaded.
-      </p>
-    </div>
-  );
+  // Import EmptyState component instead of defining inline
+  // EmptyState component is now used directly where needed
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-white">
@@ -212,17 +205,13 @@ export default function HomePage() {
               {/* Map View */}
               {viewMode === 'map' && (
                 <div className="w-full h-full">
-                  {projects && projects.length > 0 ? (
-                    <MapView 
-                      projects={projects}
-                      selectedProject={selectedProject}
-                      onSelectProject={(project) => {
-                        if (project) handleSelectProject(project);
-                      }}
-                    />
-                  ) : (
-                    <EmptyStateMessage />
-                  )}
+                  <MapView 
+                    projects={projects || []}
+                    selectedProject={selectedProject}
+                    onSelectProject={(project) => {
+                      if (project) handleSelectProject(project);
+                    }}
+                  />
                 </div>
               )}
               
@@ -230,25 +219,23 @@ export default function HomePage() {
               {viewMode === 'list' && (
                 <div className="flex flex-col h-full flex-1 p-4">
                   <div className="flex-1 overflow-hidden">
-                    {projects && projects.length > 0 ? (
-                      <DualListView
-                        projects={projects || []}
-                        selectedProject={selectedProject}
-                        onSelectProject={handleSelectProject}
-                        onViewOnMap={(project) => {
-                          setViewMode('map');
-                          if (project) handleSelectProject(project);
-                        }}
-                        sortField={sortField}
-                        sortDirection={sortDirection}
-                        onSort={handleSort}
-                        onAddFilter={addFilter}
-                        userLocation={userLocation}
-                        showOnlyMyProjects={showOnlyMyProjects}
-                      />
-                    ) : (
-                      <EmptyStateMessage />
-                    )}
+                    <DualListView
+                      projects={projects || []}
+                      selectedProject={selectedProject}
+                      onSelectProject={handleSelectProject}
+                      onViewOnMap={(project) => {
+                        setViewMode('map');
+                        if (project) handleSelectProject(project);
+                      }}
+                      sortField={sortField}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                      onAddFilter={addFilter}
+                      onRemoveFilter={removeFilter}
+                      filters={filters}
+                      userLocation={userLocation}
+                      showOnlyMyProjects={showOnlyMyProjects}
+                    />
                   </div>
                 </div>
               )}

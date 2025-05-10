@@ -8,12 +8,13 @@ import { getMapboxToken } from '@/utils/mapbox';
 import { mapQualificationStatus, isQualified } from '@/utils/qualificationStatus';
 import ImprovedFilterPanel from './ImprovedFilterPanel';
 import ToggleOption from './ToggleOption';
+import EmptyState from './EmptyState';
 
 interface MapViewProps {
   ahjs?: AHJ[];
   selectedAHJ?: AHJ | null;
   onSelectAHJ?: (ahj: AHJ) => void;
-  selectedUtility?: any;
+  // Removed selectedUtility as we're now using filter panel exclusively
   projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
@@ -23,7 +24,7 @@ const MapView: React.FC<MapViewProps> = ({
   ahjs,
   selectedAHJ,
   onSelectAHJ,
-  selectedUtility,
+  // selectedUtility removed as we're now using filter panel exclusively
   projects,
   selectedProject,
   onSelectProject,
@@ -907,6 +908,8 @@ const MapView: React.FC<MapViewProps> = ({
         showOnlyMyProjects={showOnlyMyProjects}
         toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
       />
+      
+      {/* Map is shown even when no projects are available */}
       
       {/* Project cards at the bottom */}
       {(sortedVisibleProjects.length > 0 || localSelectedProject) && (

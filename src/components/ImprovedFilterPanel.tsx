@@ -1,26 +1,13 @@
 import React, { useState, KeyboardEvent } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { ProjectFilter } from '@/utils/types';
+import { ProjectFilter, ImprovedFilterPanelProps } from '@/utils/types';
 import CollapsibleFilterSection from './CollapsibleFilterSection';
 import ActiveFilterChip from './ActiveFilterChip';
 import { FiMap, FiList, FiSearch, FiLogOut } from 'react-icons/fi';
 import { useAuth } from '@/utils/AuthContext';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
 import ToggleOption from './ToggleOption';
-
-interface ImprovedFilterPanelProps {
-  filters: ProjectFilter[];
-  addFilter: (filter: ProjectFilter) => void;
-  removeFilter: (filter: ProjectFilter) => void;
-  clearFilters: () => void;
-  onSearch?: (terms: string[]) => void;
-  searchTerms?: string[];
-  viewMode: 'map' | 'list';
-  onViewModeChange: (mode: 'map' | 'list') => void;
-  showOnlyMyProjects?: boolean;
-  toggleShowOnlyMyProjects?: () => void;
-}
 
 const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
   filters,
@@ -39,7 +26,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
 
   // Handle classification filter change
   const handleClassificationFilterChange = (
-    type: 'ahj' | 'utility' | 'financier',
+    type: 'ahj' | 'utility',
     value: string
   ) => {
     // Toggle the filter - if it's already active, remove it
@@ -115,7 +102,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
 
   // Render classification button with appropriate styling
   const renderClassificationButton = (
-    type: 'ahj' | 'utility' | 'financier',
+    type: 'ahj' | 'utility',
     classification: string
   ) => {
     const isActive = isFilterActive(type, classification);
@@ -232,15 +219,8 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
                 );
               }
               
-              // Format label based on filter type
+              // Use the filter value directly as the label
               let label = filter.value;
-              if (filter.type === 'ahj') {
-                label = `AHJ ${filter.value}`;
-              } else if (filter.type === 'utility') {
-                label = `Utility ${filter.value}`;
-              } else if (filter.type === 'financier') {
-                label = `Financier ${filter.value}`;
-              }
               
               return (
                 <ActiveFilterChip

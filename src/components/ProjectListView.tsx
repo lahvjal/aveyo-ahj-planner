@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import EmptyState from './EmptyState';
 
 interface ProjectListViewProps {
   projects: Project[];
