@@ -35,25 +35,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Fetch user profile from the users table
+  // Fetch user profile from the users table with retry mechanism
   const fetchUserProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
+    const MAX_RETRIES = 3;
+    let retryCount = 0;
+    
+    while (retryCount < MAX_RETRIES) {
+      try {
+        console.log(`Attempting to fetch user profile (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+        
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .single();
 
-      if (error) {
-        console.error('Error fetching user profile:', error);
-        return null;
+        if (error) {
+          console.error(`Error fetching user profile (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+          
+          // If this is a network error or a temporary issue, retry
+          if (error.code === 'PGRST116' || error.code === '23505' || error.message.includes('network')) {
+            retryCount++;
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            const delay = Math.min(500 * Math.pow(2, retryCount), 4000);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          } else {
+            // For other errors, don't retry
+            return null;
+          }
+        }
+
+        // Success - return the data
+        return data as UserProfile;
+      } catch (error) {
+        console.error(`Exception in fetchUserProfile (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+        retryCount++;
+        
+        if (retryCount >= MAX_RETRIES) {
+          console.error('Max retries reached for fetchUserProfile');
+          return null;
+        }
+        
+        // Exponential backoff
+        const delay = Math.min(500 * Math.pow(2, retryCount), 4000);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-
-      return data as UserProfile;
-    } catch (error) {
-      console.error('Error in fetchUserProfile:', error);
-      return null;
     }
+    
+    return null;
   };
 
   useEffect(() => {

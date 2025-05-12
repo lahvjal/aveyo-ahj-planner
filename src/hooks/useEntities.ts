@@ -11,6 +11,39 @@ export interface EntityData {
   distance: number;
 }
 
+// Cache keys
+const ENTITY_CACHE_KEY = 'aveyo_entity_cache';
+
+// Function to load entities from cache
+function loadFromCache() {
+  try {
+    const cachedData = localStorage.getItem(ENTITY_CACHE_KEY);
+    if (!cachedData) return null;
+    
+    const parsed = JSON.parse(cachedData);
+    console.log('[Entities] Found cached data from:', new Date(parsed.timestamp).toLocaleString());
+    return parsed;
+  } catch (error) {
+    console.error('[Entities] Error loading from cache:', error);
+    return null;
+  }
+}
+
+// Function to save entities to cache
+function saveToCache(ahjs: EntityData[], utilities: EntityData[]) {
+  try {
+    const cacheData = {
+      ahjs,
+      utilities,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(ENTITY_CACHE_KEY, JSON.stringify(cacheData));
+    console.log('[Entities] Saved data to cache at:', new Date().toLocaleString());
+  } catch (error) {
+    console.error('[Entities] Error saving to cache:', error);
+  }
+}
+
 export function useEntities() {
   const [utilities, setUtilities] = useState<EntityData[]>([]);
   const [ahjs, setAhjs] = useState<EntityData[]>([]);
@@ -43,22 +76,36 @@ export function useEntities() {
       // Generate a new fetch ID for this request
       const currentFetchId = ++fetchIdRef.current;
       
-      // Set up a timeout to prevent infinite loading
+      // Set up a single consistent timeout to prevent infinite loading
+      const FETCH_TIMEOUT = 20000; // 20 second timeout
+      
       const timeoutId = setTimeout(() => {
         if (isMounted.current && fetchIdRef.current === currentFetchId) {
           console.error('Entity data fetch timeout');
           setError('Timeout while fetching entity data. Please try again.');
           setIsLoading(false);
         }
-      }, 15000); // 15 second timeout
+      }, FETCH_TIMEOUT);
       
       try {
-        // Create timeout promise
+        // Create timeout promise with the same timeout duration
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => {
             reject(new Error('Entity data fetch timed out'));
-          }, 10000); // 10 second timeout
+          }, FETCH_TIMEOUT);
         });
+        
+        // Try to load from cache first
+        const cachedData = loadFromCache();
+        if (cachedData && cachedData.timestamp > Date.now() - 5 * 60 * 1000) { // 5 minute cache
+          console.log('[Entities] Using cached data while fetching fresh data');
+          if (isMounted.current && fetchIdRef.current === currentFetchId) {
+            setAhjs(cachedData.ahjs || []);
+            setUtilities(cachedData.utilities || []);
+            setIsLoading(false);
+          }
+          // Continue fetching in the background
+        }
         
         // Fetch AHJs with a timeout promise
         const ahjPromise = supabase.from('ahj').select('*');
@@ -373,16 +420,46 @@ export function useEntities() {
           setAhjs(processedAhjs);
           setUtilities(processedUtilities);
           setIsLoading(false);
+          
+          // Save successful results to cache
+          saveToCache(processedAhjs, processedUtilities);
         }
         
         // Clear the timeout since we completed successfully
         clearTimeout(timeoutId);
       } catch (error: any) {
         console.error('Error in useEntities hook:', error);
+        
         // Only update state if component is still mounted and this is still the latest request
         if (isMounted.current && fetchIdRef.current === currentFetchId) {
-          setError(error.message || 'Failed to load entity data');
-          setIsLoading(false);
+          // Check if this is a network error or timeout that should trigger a retry
+          const isNetworkError = error.message?.includes('network') || 
+                               error.message?.includes('timeout') || 
+                               error.message?.includes('fetch');
+          
+          if (isNetworkError && retryCount < 3) {
+            console.log(`[Entities] Network error detected, scheduling retry #${retryCount + 1}`);
+            // Schedule a retry with exponential backoff
+            const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 8000);
+            setTimeout(() => {
+              if (isMounted.current) {
+                console.log(`[Entities] Executing retry #${retryCount + 1}`);
+                setRetryCount(prev => prev + 1);
+              }
+            }, retryDelay);
+          } else {
+            // Use cached data as fallback if available
+            const cachedData = loadFromCache();
+            if (cachedData && cachedData.ahjs?.length > 0) {
+              console.log('[Entities] Using cached data as fallback after error');
+              setAhjs(cachedData.ahjs);
+              setUtilities(cachedData.utilities || []);
+              setError('Using cached data. Latest data could not be loaded.');
+            } else {
+              setError(error.message || 'Failed to load entity data');
+            }
+            setIsLoading(false);
+          }
         }
         
         // Clear the timeout since we handled the error

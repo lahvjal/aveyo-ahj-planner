@@ -216,7 +216,12 @@ const MapView: React.FC<MapViewProps> = ({
     try {
       if (mapRef.current) {
         console.log('[MapView] Cleaning up previous map instance');
-        mapRef.current.remove();
+        // Check if the map instance is valid and has the remove method
+        if (mapRef.current && typeof mapRef.current.remove === 'function') {
+          mapRef.current.remove();
+        } else {
+          console.warn('[MapView] Map instance exists but remove method is not available');
+        }
         mapRef.current = null;
       }
     } catch (error) {
