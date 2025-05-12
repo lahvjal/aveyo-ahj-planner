@@ -13,6 +13,7 @@ interface EntityListViewProps {
   userLocation?: { latitude: number; longitude: number } | null;
   onViewOnMap: (entityName: string, entityType: 'ahj' | 'utility') => void;
   onAddFilter: (filter: ProjectFilter) => void;
+  onRemoveFilter: (filter: ProjectFilter) => void; // Add prop for removing filters
   filters?: ProjectFilter[]; // Add filters prop to receive active filters
 }
 
@@ -21,6 +22,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   userLocation,
   onViewOnMap,
   onAddFilter,
+  onRemoveFilter,
   filters = []
 }) => {
   // We no longer need direct selection state variables as we're using filter panel exclusively
@@ -34,9 +36,17 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   const utilityScrollContainerRef = useRef<HTMLDivElement>(null);
   
   // Use the entities hook to fetch ALL AHJ and Utility data directly from Supabase
-  // This ensures we get all entities regardless of project filters
-  // We'll use this data for the relationship filtering
-  const { ahjs, utilities, isLoading, error, calculateDistances } = useEntities();
+  // We'll use this data as a base, but filter it based on the filtered projects
+  const { ahjs: allAhjs, utilities: allUtilities, isLoading, error, calculateDistances } = useEntities();
+  
+  // Create filtered lists of entities based on the filtered projects
+  // This ensures that panel filters affect which entities are shown
+  const projectAhjIds = useMemo(() => new Set(projects.map(p => p.ahj?.id).filter(Boolean)), [projects]);
+  const projectUtilityIds = useMemo(() => new Set(projects.map(p => p.utility?.id).filter(Boolean)), [projects]);
+  
+  // Filter the entities to only include those that appear in the filtered projects
+  const ahjs = useMemo(() => allAhjs.filter(ahj => projectAhjIds.has(ahj.id)), [allAhjs, projectAhjIds]);
+  const utilities = useMemo(() => allUtilities.filter(utility => projectUtilityIds.has(utility.id)), [allUtilities, projectUtilityIds]);
   
   // Use the entity relationships hook to track connections between AHJs and Utilities
   // We pass ALL projects to ensure we have complete relationship data
@@ -100,23 +110,30 @@ const EntityListView: React.FC<EntityListViewProps> = ({
         prevLocationRef.current.longitude !== userLocation.longitude;
       
       if (locationChanged) {
+        console.log('[EntityListView] Calculating distances with user location:', userLocation);
         calculateDistances(userLocation);
         prevLocationRef.current = userLocation;
+        
+        // Debug: Log AHJs with coordinates
+        console.log('[EntityListView] AHJs with coordinates:', 
+          ahjs.filter(a => a.latitude && a.longitude)
+            .map(a => ({ id: a.id, name: a.name, lat: a.latitude, lng: a.longitude, distance: a.distance }))
+        );
       }
     }
-  }, [userLocation, calculateDistances]);
+  }, [userLocation, calculateDistances, ahjs]);
   
   // Filter utilities based on highlighted AHJ from filters
   const filteredUtilities = useMemo(() => {
     // Use highlighted AHJ from filters
     const targetAhjId = getHighlightedAhjId;
     
-    if (!targetAhjId) return utilities; // Show all utilities if no AHJ is highlighted
+    if (!targetAhjId) return utilities; // Show already filtered utilities if no AHJ is highlighted
     
     const relatedUtilityIds = getRelatedUtilities(targetAhjId);
     if (!relatedUtilityIds || relatedUtilityIds.size === 0) return [];
     
-    // Filter utilities by related IDs, regardless of project filters
+    // Filter utilities by related IDs
     return utilities.filter(utility => relatedUtilityIds.has(utility.id));
   }, [utilities, getHighlightedAhjId, getRelatedUtilities]);
   
@@ -125,12 +142,12 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     // Use highlighted utility from filters
     const targetUtilityId = getHighlightedUtilityId;
     
-    if (!targetUtilityId) return ahjs; // Show all AHJs if no utility is highlighted
+    if (!targetUtilityId) return ahjs; // Show already filtered AHJs if no utility is highlighted
     
     const relatedAhjIds = getRelatedAhjs(targetUtilityId);
     if (!relatedAhjIds || relatedAhjIds.size === 0) return [];
     
-    // Filter AHJs by related IDs, regardless of project filters
+    // Filter AHJs by related IDs
     return ahjs.filter(ahj => relatedAhjIds.has(ahj.id));
   }, [ahjs, getHighlightedUtilityId, getRelatedAhjs]);
   
@@ -150,7 +167,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     
     // We no longer manage direct selection state, only filter panel filters
     if (isAlreadyFiltered) {
-      // If already filtered, remove the filter
+      // If already filtered, find and remove the filter
       const existingFilter = filters.find(f => 
         f.type === 'ahj' && 
         f.filterSource === 'entity-selection' && 
@@ -158,13 +175,8 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       );
       
       if (existingFilter) {
-        // Signal to remove the filter
-        onAddFilter({
-          type: 'ahj',
-          value: ahj.name,
-          filterSource: 'entity-selection',
-          entityId: ahj.id,
-        });
+        // Use onRemoveFilter to properly remove the filter
+        onRemoveFilter(existingFilter);
         console.log(`[EntityListView] Deselected AHJ ${ahj.id}, removing filter`);
       }
     } else {
@@ -190,7 +202,7 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     
     // We no longer manage direct selection state, only filter panel filters
     if (isAlreadyFiltered) {
-      // If already filtered, remove the filter
+      // If already filtered, find and remove the filter
       const existingFilter = filters.find(f => 
         f.type === 'utility' && 
         f.filterSource === 'entity-selection' && 
@@ -198,13 +210,8 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       );
       
       if (existingFilter) {
-        // Signal to remove the filter
-        onAddFilter({
-          type: 'utility',
-          value: utility.name,
-          filterSource: 'entity-selection',
-          entityId: utility.id,
-        });
+        // Use onRemoveFilter to properly remove the filter
+        onRemoveFilter(existingFilter);
         console.log(`[EntityListView] Deselected Utility ${utility.id}, removing filter`);
       }
     } else {
@@ -341,20 +348,20 @@ const EntityListView: React.FC<EntityListViewProps> = ({
       <div className="h-full flex flex-col">
         {/* Table header */}
         <div className="bg-[#1e1e1e] sticky top-0 z-10">
-          <div className="grid grid-cols-5 divide-x divide-[#333333]">
+          <div className="grid-cols-5-new divide-x divide-[#333333]">
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
               {entityType.toUpperCase()}
             </div>
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+            <div className="px-6 py-3 text-center text-xs font-medium text-gray-300 uppercase tracking-wider">
               NO. PROJ
             </div>
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+            <div className="px-6 py-3 text-center text-xs font-medium text-gray-300 uppercase tracking-wider">
               CLASS
             </div>
             <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
               DISTANCE
             </div>
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+            <div className="px-6 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider pr-6">
               MAP
             </div>
           </div>
@@ -419,18 +426,23 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   // Render the main component with side-by-side AHJ and Utility lists
   return (
     <div className="w-full h-full flex flex-col">
-      <h2 className="text-xl font-bold text-white mb-4">AHJ & UTILITY</h2>
       
       {/* Side-by-side entity lists */}
       <div className="grid grid-cols-2 gap-4 flex-1">
         {/* AHJ List */}
-        <div className="rounded-md border border-[#333333] flex-1 h-full">
-          {renderEntityList('ahj')}
+        <div className="flex-1 h-full">
+          <h2 className="text-xl font-bold text-white mb-4">AHJ</h2>
+          <div className="rounded-md border border-[#333333] w-100% h-100%">
+            {renderEntityList('ahj')}
+          </div>
         </div>
         
         {/* Utility List */}
-        <div className="rounded-md border border-[#333333] flex-1 h-full">
-          {renderEntityList('utility')}
+        <div className="flex-1 h-full">
+          <h2 className="text-xl font-bold text-white mb-4">UTILITY</h2>
+          <div className="rounded-md border border-[#333333] w-100% h-100%">
+            {renderEntityList('utility')}
+          </div>
         </div>
       </div>
       

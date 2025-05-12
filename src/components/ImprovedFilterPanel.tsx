@@ -6,7 +6,7 @@ import CollapsibleFilterSection from './CollapsibleFilterSection';
 import ActiveFilterChip from './ActiveFilterChip';
 import { FiMap, FiList, FiSearch, FiLogOut } from 'react-icons/fi';
 import { useAuth } from '@/utils/AuthContext';
-import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
 import ToggleOption from './ToggleOption';
 
 const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
@@ -16,8 +16,6 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
   clearFilters,
   onSearch,
   searchTerms = [],
-  viewMode,
-  onViewModeChange,
   showOnlyMyProjects,
   toggleShowOnlyMyProjects,
 }) => {
@@ -117,7 +115,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
             : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
         }`}
       >
-        {classification || 'Unknown'}
+        {formatClassification(classification)}
       </button>
     );
   };
@@ -145,33 +143,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
         <div className="border-t border-gray-800"></div>
       </div>
       
-      {/* View Toggle */}
-      <div className="p-4 pb-5">
-        <div className="flex bg-gray-800 rounded-md p-1">
-          <button
-            onClick={() => onViewModeChange('map')}
-            className={`flex items-center justify-center flex-1 px-4 py-2 rounded-md transition-colors ${
-              viewMode === 'map' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-transparent text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            <FiMap className="mr-2" />
-            Map
-          </button>
-          <button
-            onClick={() => onViewModeChange('list')}
-            className={`flex items-center justify-center flex-1 px-4 py-2 rounded-md transition-colors ${
-              viewMode === 'list' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-transparent text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            <FiList className="mr-2" />
-            List
-          </button>
-        </div>
-      </div>
+      {/* View Toggle removed as it's now in the main page */}
       <>
         {/* Search Area */}
         <div className="px-4 pb-4">
@@ -272,7 +244,8 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
           <div className="border-t border-gray-800"></div>
         </div>
         
-        {/* My Projects Toggle */}
+        {/* My Projects Toggle - Hidden as we now have a dedicated My Projects tab */}
+        {/* 
         <div className="px-5 py-3 border-t border-gray-700">
           <ToggleOption
             label="Filter My Projects"
@@ -280,6 +253,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
             onToggle={toggleShowOnlyMyProjects || (() => {})}
           />
         </div>
+        */}
         
         {/* Logout Button */}
         <div className="px-4 py-4">

@@ -18,6 +18,8 @@ interface MapViewProps {
   projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
+  filters?: ProjectFilter[];
+  utilities?: any[];
 }
 
 const MapView: React.FC<MapViewProps> = ({
@@ -28,6 +30,8 @@ const MapView: React.FC<MapViewProps> = ({
   projects,
   selectedProject,
   onSelectProject,
+  filters = [],
+  utilities = [],
 }) => {
   const { userProfile } = useAuth();
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -184,9 +188,42 @@ const MapView: React.FC<MapViewProps> = ({
     };
   };
 
+  // Effect to handle window resize events
+  useEffect(() => {
+    const handleResize = () => {
+      try {
+        if (mapRef.current) {
+          console.log('[MapView] Window resize detected, resizing map');
+          mapRef.current.resize();
+        }
+      } catch (error) {
+        console.error('[MapView] Error resizing map:', error);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+  
   // Effect to initialize map
   useEffect(() => {
     if (!mapContainer.current) return;
+    
+    // Clean up previous map instance if it exists
+    try {
+      if (mapRef.current) {
+        console.log('[MapView] Cleaning up previous map instance');
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    } catch (error) {
+      console.error('[MapView] Error cleaning up map:', error);
+      // Just set to null if we can't remove it properly
+      mapRef.current = null;
+    }
     
     const initializeMap = async () => {
       // Set Mapbox access token using the utility function
@@ -232,6 +269,18 @@ const MapView: React.FC<MapViewProps> = ({
       map.on('load', () => {
         console.log('[MapView] Map loaded');
         setMapLoaded(true);
+        
+        // Force a resize after load to ensure proper rendering
+        setTimeout(() => {
+          try {
+            if (map) {
+              console.log('[MapView] Forcing map resize after load');
+              map.resize();
+            }
+          } catch (error) {
+            console.error('[MapView] Error during forced resize:', error);
+          }
+        }, 200);
         
         // After map loads, trigger geolocation and find nearest projects
         setTimeout(() => {
@@ -833,7 +882,7 @@ const MapView: React.FC<MapViewProps> = ({
     );
   };
 
-  const [filters, setFilters] = useState<ProjectFilter[]>([]);
+  const [localFilters, setLocalFilters] = useState<ProjectFilter[]>([]);
   const [searchTerms, setSearchTerms] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
@@ -854,15 +903,15 @@ const MapView: React.FC<MapViewProps> = ({
   };
 
   const addFilter = (filter: ProjectFilter) => {
-    setFilters([...filters, filter]);
+    setLocalFilters([...localFilters, filter]);
   };
 
   const removeFilter = (filter: ProjectFilter) => {
-    setFilters(filters.filter(f => !(f.type === filter.type && f.value === filter.value)));
+    setLocalFilters(localFilters.filter(f => !(f.type === filter.type && f.value === filter.value)));
   };
 
   const clearFilters = () => {
-    setFilters([]);
+    setLocalFilters([]);
   };
 
   // Memoize visible projects to prevent unnecessary re-renders
@@ -903,8 +952,6 @@ const MapView: React.FC<MapViewProps> = ({
         addFilter={() => {}} // Implement filter adding logic
         removeFilter={() => {}} // Implement filter removing logic
         clearFilters={() => {}} // Implement clear filters logic
-        viewMode="map"
-        onViewModeChange={() => {}} // This is handled internally in MapView
         showOnlyMyProjects={showOnlyMyProjects}
         toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
       />

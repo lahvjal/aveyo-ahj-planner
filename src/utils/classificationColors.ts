@@ -34,6 +34,13 @@ export const getClassificationBadgeClass = (classification: string | undefined, 
   return `${classificationBgColors[key]} ${classificationTextColors[key]}`;
 };
 
+// Format classification for display
+export const formatClassification = (classification: string | undefined): string => {
+  if (!classification) return 'U';
+  if (classification === 'A' || classification === 'B' || classification === 'C') return classification;
+  return 'U';
+};
+
 // Get map color based on classification
 export const getClassificationMapColor = (classification: string | undefined) => {
   const key = classification === 'A' || classification === 'B' || classification === 'C' 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
-import { getClassificationBadgeClass } from '@/utils/classificationColors';
+import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
 import EmptyState from './EmptyState';
 
 interface ProjectListViewProps {
@@ -146,7 +146,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
     
     return (
       <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(classification)}`}>
-        {classification || 'Unknown'}
+        {formatClassification(classification)}
       </span>
     );
   };
@@ -156,7 +156,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
     
     return (
       <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(classification)}`}>
-        {classification || 'Unknown'}
+        {formatClassification(classification)}
       </span>
     );
   };
@@ -173,6 +173,7 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col">
+      <h2 className="text-xl font-bold text-white mb-4">MY PROJECTS</h2>
       <div className="rounded-md border border-[#333333] flex-1 h-full flex flex-col">
         {/* Table header */}
         <div className="bg-[#1e1e1e] sticky top-0 z-10">
@@ -242,9 +243,11 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        onViewOnMap(project);
+                        if (project.latitude && project.longitude) {
+                          onViewOnMap(project);
+                        }
                       }}
-                      className="text-gray-300 hover:text-white flex items-center justify-end"
+                      className={`flex items-center justify-end ${project.latitude && project.longitude ? 'text-gray-300 hover:text-white' : 'text-gray-800 cursor-default'}`}
                       disabled={!project.latitude || !project.longitude}
                       title={project.latitude && project.longitude ? 'View on map' : 'No coordinates available'}
                     >

@@ -8,11 +8,11 @@
  */
 export function formatDistance(distance?: number): string {
   if (distance === undefined || distance === null) {
-    return 'N/A';
+    return 'empty';
   }
   
   if (distance === Number.MAX_VALUE || distance === Infinity) {
-    return 'Unknown';
+    return 'empty';
   }
   
   if (distance < 0.1) {

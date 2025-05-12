@@ -154,6 +154,7 @@ const DualListView: React.FC<DualListViewProps> = ({
           userLocation={userLocation}
           onViewOnMap={handleEntityViewOnMap}
           onAddFilter={handleEntityFilter}
+          onRemoveFilter={onRemoveFilter}
           filters={filters}
         />
       )}
