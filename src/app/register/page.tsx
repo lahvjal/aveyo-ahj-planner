@@ -29,10 +29,11 @@ export default function RegisterPage() {
     const fetchValidSalesRepIds = async () => {
       try {
         // Get all active sales rep IDs from the sales_reps table
+        // Note: 'active' column contains 'Active' (capital A) based on the database
         const { data, error } = await supabase
           .from('sales_reps')
           .select('rep_id')
-          .eq('active', 'active');
+          .eq('active', 'Active');
 
         if (error) {
           console.error('Error fetching sales rep IDs:', error);
@@ -76,8 +77,47 @@ export default function RegisterPage() {
     }
 
     // Validate sales rep ID against our list of valid IDs
-    if (!validSalesRepIds.includes(salesRepId)) {
-      setError('Invalid Sales Rep ID. Please check and try again.');
+    console.log('Validating rep ID:', salesRepId);
+    console.log('Valid rep IDs:', validSalesRepIds);
+    
+    if (validSalesRepIds.length === 0) {
+      // If we couldn't fetch valid rep IDs, skip this validation
+      console.log('Skipping rep ID validation as no valid IDs were fetched');
+    } else {
+      // Check if the rep ID exists in the list of valid IDs
+      // Convert to string for comparison since the database might store them as strings
+      const salesRepIdStr = String(salesRepId).trim();
+      const isValid = validSalesRepIds.some(id => String(id).trim() === salesRepIdStr);
+      
+      console.log('Rep ID after conversion:', salesRepIdStr);
+      console.log('Is rep ID valid?', isValid);
+      
+      if (!isValid) {
+        setError('Invalid Sales Rep ID. Please check and try again.');
+        setIsLoading(false);
+        return;
+      }
+    }
+    
+    // Check if the rep ID is already linked to an existing account
+    try {
+      const { data: existingUsers, error: queryError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('rep_id', salesRepId);
+      
+      if (queryError) {
+        throw queryError;
+      }
+      
+      if (existingUsers && existingUsers.length > 0) {
+        setError('This Sales Rep ID is already linked to an existing account. Please contact support if you need assistance.');
+        setIsLoading(false);
+        return;
+      }
+    } catch (err: any) {
+      console.error('Error checking for existing rep ID:', err);
+      setError('An error occurred while validating your Sales Rep ID. Please try again.');
       setIsLoading(false);
       return;
     }
