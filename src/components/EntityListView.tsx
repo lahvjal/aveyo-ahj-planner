@@ -48,71 +48,13 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     [projects]
   );
   
-  // IMPORTANT: Use the already filtered entities from DataContext directly
-  // The DataContext already applies proper filtering based on:
-  // 1. Project filters (when no entity-specific filters exist)
-  // 2. Entity-specific filters (when they exist)
-  
-  // Log filtering status for debugging
-  // console.log('EntityListView - Filter status:', 
-  //             'Project filters:', filters.projectFilters.length, 
-  //             'Entity filters:', filters.entityFilters.length);
-  // console.log('EntityListView - Entities from DataContext:', 
-  //             'AHJs:', allAhjs.length, 
-  //             'Utilities:', allUtilities.length);
-  
-  // Debug filter structure
-  // if (filters.entityFilters.length > 0) {
-  //   console.log('FILTER DEBUG: Entity filters:', filters.entityFilters);
-  // }
-  
-  // if (filters.projectFilters.length > 0) {
-  //   console.log('FILTER DEBUG: Project filters:', filters.projectFilters);
-  // }
-  
   // Use the already filtered entities directly
   const ahjs = allAhjs;
   const utilities = allUtilities;
   
   // Log data received by EntityListView component
   useEffect(() => {
-    // console.log('===== ENTITYLISTVIEW COMPONENT DATA =====');
-    // console.log('Projects received:', projects.length);
-    // console.log('Processed AHJs received:', allAhjs.length);
-    // console.log('Processed Utilities received:', allUtilities.length);
-    // console.log('Is Loading:', isLoading);
-    // console.log('Error:', error);
-    // console.log('Filters:', filters);
     
-    // Check if data is still loading
-    if (isLoading) {
-      // console.log('Data is still loading, waiting for data to be ready');
-    }
-    
-    // Debug entity data structure
-    if (allAhjs.length > 0) {
-      // console.log('Sample processed AHJ structure:', allAhjs[0]);
-    } else {
-      // console.log('No AHJs available at all');
-    }
-    
-    if (allUtilities.length > 0) {
-      // console.log('Sample processed Utility structure:', allUtilities[0]);
-    } else {
-      //console.log('No Utilities available at all');
-    }
-    
-    // Debug project entity references
-    if (projects.length > 0) {
-      //console.log('Sample Project AHJ reference:', projects[0].ahj);
-      //console.log('Sample Project Utility reference:', projects[0].utility);
-    }
-    
-    // Log the actual displayed entities (filtered entities)
-    //console.log('AHJs to be displayed:', ahjs.length);
-    //console.log('Utilities to be displayed:', utilities.length);
-    
-    //console.log('===== END ENTITYLISTVIEW COMPONENT DATA =====');
   }, [projects, allAhjs, allUtilities, filters, isLoading, error, ahjs, utilities]);
   
   // Helper function to get related entities
@@ -144,14 +86,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     const d = R * c; // Distance in km
     return d;
   };
-  
-  // No need to calculate distances here anymore as it's handled in DataContext
-  // Just log that we're using pre-calculated distances
-  // useEffect(() => {
-  //   if (userLocation) {
-  //     console.log('EntityListView: Using pre-calculated distances from DataContext');
-  //   }
-  // }, [userLocation]);
   
   // Use the already filtered and sorted entities directly from DataContext
   // No additional sorting needed as DataContext now handles all sorting logic
@@ -468,36 +402,37 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     <div className="w-full h-full flex flex-col">
       {/* Header with tabs */}
       <div className="flex bg-gray-800 border-b border-gray-700">
+      <div className="w-1/2 py-2 px-4 font-medium text-center">
+          Utilities ({filteredUtilities.length})
+          <div className="text-xs text-gray-400">
+            Processed: {allUtilities.length} | Filtered: {utilities.length}
+          </div>
+        </div>
         <div className="w-1/2 py-2 px-4 font-medium text-center border-r border-gray-700">
           AHJs ({filteredAhjs.length})
           <div className="text-xs text-gray-400">
             Processed: {allAhjs.length} | Filtered: {ahjs.length}
           </div>
         </div>
-        <div className="w-1/2 py-2 px-4 font-medium text-center">
-          Utilities ({filteredUtilities.length})
-          <div className="text-xs text-gray-400">
-            Processed: {allUtilities.length} | Filtered: {utilities.length}
-          </div>
-        </div>
+        
       </div>
       
       {/* Content area with two scrollable lists */}
       <div className="flex flex-grow overflow-hidden">
-        {/* AHJ List */}
-        <div 
-          ref={ahjScrollContainerRef}
-          className="w-1/2 overflow-y-auto border-r border-gray-700"
-        >
-          {renderEntityList('ahj')}
-        </div>
-        
         {/* Utility List */}
         <div 
           ref={utilityScrollContainerRef}
           className="w-1/2 overflow-y-auto"
         >
           {renderEntityList('utility')}
+        </div>
+        
+        {/* AHJ List */}
+        <div 
+          ref={ahjScrollContainerRef}
+          className="w-1/2 overflow-y-auto border-r border-gray-700"
+        >
+          {renderEntityList('ahj')}
         </div>
       </div>
     </div>
