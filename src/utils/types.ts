@@ -72,8 +72,8 @@ export type FilterSource = 'manual' | 'entity-selection' | 'search';
  * This allows us to distinguish between regular filters and those created from entity selections
  */
 export interface ProjectFilter {
-  /** The type of filter (e.g., 'ahj', 'utility', 'financier', '45day', 'search', 'myprojects') */
-  type: 'ahj' | 'utility' | 'financier' | '45day' | 'search' | 'myprojects';
+  /** The type of filter (e.g., 'ahj', 'utility', 'financier', '45day', 'search', 'myprojects', 'class') */
+  type: 'ahj' | 'utility' | 'financier' | '45day' | 'search' | 'myprojects' | 'class';
   
   /** The display value of the filter (e.g., entity name, state name) */
   value: string;
