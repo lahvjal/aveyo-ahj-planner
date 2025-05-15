@@ -85,12 +85,21 @@ export default function ProjectsPage() {
           {/* Filter panel content */}
           <div className="h-full">
             <ImprovedFilterPanel
-              filters={filters}
+              filters={{
+                projectFilters: filters,
+                entityFilters: []
+              }}
               addFilter={addFilter}
-              removeFilter={removeFilter}
+              removeFilter={(filterId) => {
+                // Find the filter by ID and remove it
+                const filterToRemove = filters.find(f => f.id === filterId);
+                if (filterToRemove) {
+                  removeFilter(filterToRemove);
+                }
+              }}
               clearFilters={clearFilters}
-              onSearch={handleSearch}
-              searchTerms={searchTerms}
+              onSearch={(terms) => handleSearch([terms])}
+              searchTerms={searchTerms.join(' ')}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               showOnlyMyProjects={showOnlyMyProjects}
@@ -115,7 +124,6 @@ export default function ProjectsPage() {
               {viewMode === 'map' && (
                 <div className="w-full h-full">
                   <MapView 
-                    projects={projects}
                     selectedProject={selectedProject}
                     onSelectProject={(project) => {
                       if (project) handleSelectProject(project);
@@ -181,7 +189,6 @@ export default function ProjectsPage() {
                   
                   <div className="flex-1 overflow-hidden">
                     <ProjectListView
-                      projects={projects || []}
                       selectedProject={selectedProject}
                       onSelectProject={handleSelectProject}
                       onViewOnMap={(project) => {

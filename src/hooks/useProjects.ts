@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/utils/supabaseClient';
 import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
@@ -20,6 +20,9 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
   // Function to load projects from cache
   const loadFromCache = () => {
     try {
+      // Check if we're in a browser environment
+      if (typeof window === 'undefined') return null;
+      
       const cachedData = localStorage.getItem(PROJECTS_CACHE_KEY);
       if (!cachedData) return null;
       
@@ -33,6 +36,9 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
   // Function to save projects to cache
   const saveToCache = (projects: Project[]) => {
     try {
+      // Check if we're in a browser environment
+      if (typeof window === 'undefined') return;
+      
       const cacheData = {
         projects,
         timestamp: Date.now()

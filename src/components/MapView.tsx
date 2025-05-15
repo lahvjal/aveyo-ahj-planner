@@ -1,6 +1,10 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+// Import mapboxgl dynamically to prevent SSR issues
+let mapboxgl: any;
+if (typeof window !== 'undefined') {
+  mapboxgl = require('mapbox-gl');
+}
 import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
 import { useData } from '@/contexts/DataContext';
@@ -302,7 +306,7 @@ const MapView: React.FC<MapViewProps> = ({
         });
       });
       
-      map.on('error', (e) => {
+      map.on('error', (e: mapboxgl.ErrorEvent) => {
         // Handle map error silently
       });
       

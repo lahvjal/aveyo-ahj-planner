@@ -12,6 +12,9 @@ interface ProjectListViewProps {
   selectedProject?: Project | null;
   onSelectProject?: (project: Project) => void;
   showOnlyUserProjects?: boolean;
+  sortField?: string;
+  sortDirection?: 'asc' | 'desc';
+  onSort?: (field: string, direction: 'asc' | 'desc') => void;
 }
 
 const ProjectListView: React.FC<ProjectListViewProps> = ({

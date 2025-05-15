@@ -136,6 +136,8 @@ export interface ImprovedFilterPanelProps {
   searchTerms?: string;
   showOnlyMyProjects?: boolean;
   toggleShowOnlyMyProjects?: () => void;
+  viewMode?: 'map' | 'list';
+  onViewModeChange?: (mode: 'map' | 'list') => void;
 }
 
 /**
