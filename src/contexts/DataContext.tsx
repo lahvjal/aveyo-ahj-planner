@@ -965,7 +965,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         
         // Always calculate project count regardless of coordinate validity
-        const projectCount = filteredProjects.filter(p => p.ahj_item_id === ahj.id).length;        
+        const projectCount = rawData.projects.filter(p => p.ahj_item_id === ahj.id).length;        
         return { ...ahj, distance, projectCount };
       });
       
@@ -984,21 +984,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         
         // Always calculate project count regardless of coordinate validity
-        const projectCount = filteredProjects.filter(p => p.utility_company_item_id === utility.id).length;        
+        const projectCount = rawData.projects.filter(p => p.utility_company_item_id === utility.id).length;        
         return { ...utility, distance, projectCount };
       });
       
     } else {
       // No user location available, set default distance
-      filteredAhjs = filteredAhjs.map(ahj => ({
-        ...ahj,
-        distance: Infinity
-      }));
+      // But still calculate project counts
+      filteredAhjs = filteredAhjs.map(ahj => {
+        // Calculate project count
+        const projectCount = rawData.projects.filter(p => p.ahj_item_id === ahj.id).length;
+        return {
+          ...ahj,
+          distance: Infinity,
+          projectCount
+        };
+      });
       
-      filteredUtilities = filteredUtilities.map(utility => ({
-        ...utility,
-        distance: Infinity
-      }));
+      filteredUtilities = filteredUtilities.map(utility => {
+        // Calculate project count
+        const projectCount = rawData.projects.filter(p => p.utility_company_item_id === utility.id).length;
+        return {
+          ...utility,
+          distance: Infinity,
+          projectCount
+        };
+      });
     }
     
     // 8. Apply entity sorting
