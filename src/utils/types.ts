@@ -55,6 +55,8 @@ export interface Project {
   rep_id?: string | null;
   contract_signed_date?: string;
   customer_name?: string;
+  ahj_item_id: string;
+  utility_company_item_id: string
 }
 
 /**
@@ -70,7 +72,7 @@ export type FilterSource = 'manual' | 'entity-selection' | 'search';
  * This allows us to distinguish between regular filters and those created from entity selections
  */
 export interface ProjectFilter {
-  /** The type of filter (e.g., 'ahj', 'utility', 'financier', 'state', 'classification') */
+  /** The type of filter (e.g., 'ahj', 'utility', 'financier', '45day', 'search', 'myprojects') */
   type: 'ahj' | 'utility' | 'financier' | '45day' | 'search' | 'myprojects';
   
   /** The display value of the filter (e.g., entity name, state name) */
@@ -94,19 +96,57 @@ export interface ProjectFilter {
    * Useful for storing extra information like coordinates for map pins
    */
   metadata?: Record<string, any>;
+  
+  /**
+   * Unique identifier for the filter
+   * Used for removing specific filters
+   */
+  id?: string;
+  
+  /**
+   * Human-readable label for the filter
+   * Used for displaying in the UI
+   */
+  label?: string;
+  
+  /**
+   * Specifies the entity type for entity filters
+   * Used to determine which entity list the filter applies to
+   */
+  entityType?: 'ahj' | 'utility';
+}
+
+/**
+ * Filter state structure used in the DataContext
+ */
+export interface FilterState {
+  projectFilters: ProjectFilter[];
+  entityFilters: ProjectFilter[];
 }
 
 /**
  * Props for the ImprovedFilterPanel component
  */
 export interface ImprovedFilterPanelProps {
-  filters: ProjectFilter[];
+  filters: FilterState;
   addFilter: (filter: ProjectFilter) => void;
-  removeFilter: (filter: ProjectFilter) => void;
+  removeFilter: (filterId: string, isEntityFilter?: boolean) => void;
   clearFilters: () => void;
-  onSearch?: (terms: string[]) => void;
-  searchTerms?: string[];
+  onSearch?: (terms: string) => void;
+  searchTerms?: string;
   showOnlyMyProjects?: boolean;
   toggleShowOnlyMyProjects?: () => void;
+}
+
+/**
+ * Props for the EntityListView component
+ */
+export interface EntityListViewProps {
+  projects: Project[];
+  userLocation?: { latitude: number; longitude: number } | null;
+  onViewOnMap: (entityName: string, entityType: 'ahj' | 'utility') => void;
+  onAddFilter: (filter: ProjectFilter) => void;
+  onRemoveFilter: (filterId: string, isEntityFilter?: boolean) => void;
+  filters: FilterState;
 }
 

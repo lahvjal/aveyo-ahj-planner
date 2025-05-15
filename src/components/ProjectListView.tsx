@@ -1,279 +1,356 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
+import { useData } from '@/contexts/DataContext';
+import { useAuth } from '@/utils/AuthContext';
 import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
+import { isQualified } from '@/utils/qualificationStatus';
 import EmptyState from './EmptyState';
 
 interface ProjectListViewProps {
-  projects: Project[];
   onViewOnMap: (project: Project) => void;
   selectedProject?: Project | null;
   onSelectProject?: (project: Project) => void;
-  onSort?: (field: string, direction: 'asc' | 'desc') => void;
-  sortField?: string;
-  sortDirection?: 'asc' | 'desc';
+  showOnlyUserProjects?: boolean;
 }
 
 const ProjectListView: React.FC<ProjectListViewProps> = ({
-  projects,
   onViewOnMap,
   selectedProject = null,
   onSelectProject,
-  onSort,
-  sortField = 'address',
-  sortDirection = 'asc'
+  showOnlyUserProjects = false
 }) => {
-  const [localSortField, setLocalSortField] = useState<string>(sortField);
-  const [localSortDirection, setLocalSortDirection] = useState<'asc' | 'desc'>(sortDirection);
+  // Use DataContext for data and filters
+  const { 
+    projects,
+    isLoading,
+    error,
+    updateSortOptions,
+    filters
+  } = useData();
+  
+  const { userProfile } = useAuth();
+  
+  // Log data received by ProjectListView component
+  useEffect(() => {
+    // console.log('===== PROJECTLISTVIEW COMPONENT DATA =====');
+    // console.log('Projects received:', projects.length);
+    // console.log('Filtered projects (showOnlyUserProjects):', 
+    //   showOnlyUserProjects && userProfile ? 
+    //   projects.filter(p => p.rep_id === userProfile.rep_id).length : 
+    //   'N/A');
+    // console.log('Filters:', filters);
+    // console.log('===== END PROJECTLISTVIEW COMPONENT DATA =====');
+  }, [projects, filters, showOnlyUserProjects, userProfile]);
+  
+  // Local state for sorting
+  const [localSortField, setLocalSortField] = useState<string>('name');
+  const [localSortDirection, setLocalSortDirection] = useState<'asc' | 'desc'>('asc');
+  
+  // Ref for scroll container
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [visibleItems, setVisibleItems] = useState<Project[]>([]);
+  
+  // State for infinite scrolling
   const [loadedCount, setLoadedCount] = useState(20);
   
-  // Load more items when scrolling
-  useEffect(() => {
-    setVisibleItems(projects.slice(0, loadedCount));
-  }, [projects, loadedCount]);
+  // Filter projects if showing only user's projects
+  const filteredProjects = useMemo(() => {
+    if (!showOnlyUserProjects || !userProfile) return projects;
+    return projects.filter(project => project.rep_id === userProfile.rep_id);
+  }, [projects, showOnlyUserProjects, userProfile]);
   
-  // Handle scroll event to load more items
+  // Sort projects based on current sort field and direction
+  const sortedProjects = useMemo(() => {
+    return [...filteredProjects].sort((a, b) => {
+      // First, prioritize unmasked projects over masked ones
+      const aIsComplete = a.status && 
+        (a.status.toLowerCase() === 'complete' || 
+         a.status.toLowerCase() === 'completed' ||
+         a.status.toLowerCase().includes('complete'));
+      
+      const bIsComplete = b.status && 
+        (b.status.toLowerCase() === 'complete' || 
+         b.status.toLowerCase() === 'completed' ||
+         b.status.toLowerCase().includes('complete'));
+      
+      const aIsAssignedToCurrentUser = a.rep_id === userProfile?.rep_id;
+      const bIsAssignedToCurrentUser = b.rep_id === userProfile?.rep_id;
+      
+      const aIsMasked = !(aIsComplete || aIsAssignedToCurrentUser);
+      const bIsMasked = !(bIsComplete || bIsAssignedToCurrentUser);
+      
+      if (!aIsMasked && bIsMasked) return -1;
+      if (aIsMasked && !bIsMasked) return 1;
+      
+      // Then sort by the selected field
+      let aValue: any = a[localSortField as keyof Project];
+      let bValue: any = b[localSortField as keyof Project];
+      
+      // Handle special cases
+      if (localSortField === 'ahj') {
+        aValue = a.ahj?.name || '';
+        bValue = b.ahj?.name || '';
+      } else if (localSortField === 'utility') {
+        aValue = a.utility?.name || '';
+        bValue = b.utility?.name || '';
+      } else if (localSortField === 'financier') {
+        aValue = a.financier?.name || '';
+        bValue = b.financier?.name || '';
+      } else if (localSortField === '45day') {
+        aValue = isQualified(a) ? 1 : 0;
+        bValue = isQualified(b) ? 1 : 0;
+      }
+      
+      // Convert to strings for comparison if they're not already
+      if (typeof aValue !== 'number') aValue = String(aValue || '').toLowerCase();
+      if (typeof bValue !== 'number') bValue = String(bValue || '').toLowerCase();
+      
+      // Compare based on direction
+      if (localSortDirection === 'asc') {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+      } else {
+        return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
+      }
+    });
+  }, [filteredProjects, localSortField, localSortDirection, userProfile]);
+  
+  // Get visible items based on loaded count
+  const visibleItems = useMemo(() => {
+    return sortedProjects.slice(0, loadedCount);
+  }, [sortedProjects, loadedCount]);
+  
+  // Handle sorting
+  const handleSort = (field: string) => {
+    if (field === localSortField) {
+      // Toggle direction if clicking the same field
+      const newDirection = localSortDirection === 'asc' ? 'desc' : 'asc';
+      setLocalSortDirection(newDirection);
+      updateSortOptions(field, newDirection);
+    } else {
+      // Set new field with default ascending direction
+      setLocalSortField(field);
+      setLocalSortDirection('asc');
+      updateSortOptions(field, 'asc');
+    }
+  };
+  
+  // Handle scroll event for infinite scrolling
   useEffect(() => {
     const handleScroll = () => {
-      if (!scrollContainerRef.current || isLoading) return;
+      if (!scrollContainerRef.current) return;
       
       const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
       
-      // If scrolled near the bottom, load more items
-      if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (loadedCount < projects.length) {
-          setIsLoading(true);
-          // Simulate loading delay (can be removed in production)
-          setTimeout(() => {
-            setLoadedCount(prev => Math.min(prev + 10, projects.length));
-            setIsLoading(false);
-          }, 200);
-        }
+      // Load more when scrolled to bottom (with a small buffer)
+      if (scrollHeight - scrollTop <= clientHeight + 100) {
+        setLoadedCount(prev => prev + 10); // Load 10 more items
       }
     };
     
-    const currentContainer = scrollContainerRef.current;
-    if (currentContainer) {
-      currentContainer.addEventListener('scroll', handleScroll);
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      
+      return () => {
+        container.removeEventListener('scroll', handleScroll);
+      };
     }
-    
-    return () => {
-      if (currentContainer) {
-        currentContainer.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, [loadedCount, isLoading, projects.length]);
+  }, []);
   
-  // Reset loaded count when projects change (e.g., due to filtering)
+  // Reset loaded count when projects change
   useEffect(() => {
     setLoadedCount(20);
-  }, [projects]);
+  }, [filteredProjects.length]);
   
-  // Set a fixed height style to ensure the table fills the available space
-  useEffect(() => {
-    const updateTableHeight = () => {
-      if (!scrollContainerRef.current) return;
-      
-      // Get viewport height
-      const viewportHeight = window.innerHeight;
-      
-      // Get container's position from the top of the viewport
-      const containerRect = scrollContainerRef.current.getBoundingClientRect();
-      const containerTop = containerRect.top;
-      
-      // Calculate available height (viewport height minus container top position minus footer space)
-      // The 40px accounts for some bottom margin
-      const availableHeight = viewportHeight - containerTop - 40;
-      
-      // Apply the height to the container
-      scrollContainerRef.current.style.height = `${availableHeight}px`;
-      
-      console.log('Viewport height:', viewportHeight);
-      console.log('Container top:', containerTop);
-      console.log('Available height:', availableHeight);
-    };
+  // Render sort indicator
+  const renderSortIndicator = (field: string) => {
+    if (field !== localSortField) return null;
     
-    // Initial update
-    updateTableHeight();
-    
-    // Update on resize
-    window.addEventListener('resize', updateTableHeight);
-    
-    return () => {
-      window.removeEventListener('resize', updateTableHeight);
-    };
-  }, []);
-
-  // Handle sorting
-  const handleSort = (field: string) => {
-    const newDirection = localSortField === field && localSortDirection === 'asc' ? 'desc' : 'asc';
-    
-    setLocalSortField(field);
-    setLocalSortDirection(newDirection);
-    
-    if (onSort) {
-      onSort(field, newDirection);
-    }
+    return (
+      <span className="ml-1">
+        {localSortDirection === 'asc' ? '↑' : '↓'}
+      </span>
+    );
   };
-
+  
   // Handle project selection
   const handleSelectProject = (project: Project) => {
     if (onSelectProject) {
       onSelectProject(project);
     }
   };
-
-  // Render sort indicator
-  const renderSortIndicator = (field: string) => {
-    const currentSortField = onSort ? sortField : localSortField;
-    const currentSortDirection = onSort ? sortDirection : localSortDirection;
-    
-    if (currentSortField !== field) return null;
-    
+  
+  // Render loading state
+  if (isLoading) {
     return (
-      <span className="ml-1">
-        {currentSortDirection === 'asc' ? '↑' : '↓'}
-      </span>
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-400">Loading projects...</div>
+      </div>
     );
-  };
-
-  // Get classification display for different types
-  const getAHJClassification = (project: Project) => {
-    const classification = project.ahj.classification || '';
-    
+  }
+  
+  // Render error state
+  if (error) {
     return (
-      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(classification)}`}>
-        {formatClassification(classification)}
-      </span>
+      <div className="flex items-center justify-center h-full">
+        <div className="text-red-500">Error loading projects: {error}</div>
+      </div>
     );
-  };
-
-  const getUtilityClassification = (project: Project) => {
-    const classification = project.utility.classification || '';
-    
+  }
+  
+  // Render empty state
+  if (filteredProjects.length === 0) {
     return (
-      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(classification)}`}>
-        {formatClassification(classification)}
-      </span>
+      <div className="flex items-center justify-center h-full p-4">
+        <EmptyState 
+          title={showOnlyUserProjects ? "No Projects Assigned to You" : "No Projects Found"} 
+          message={showOnlyUserProjects 
+            ? "You don't have any projects assigned to you yet."
+            : "Try adjusting your filters to see more results."
+          }
+          icon="folder"
+        />
+      </div>
     );
-  };
-
-  // Table headers
-  const tableHeaders = [
-    { id: 'customer_name', label: 'Customer Name' },
-    { id: 'address', label: 'Address' },
-    { id: 'utility.name', label: 'Utility' },
-    { id: 'ahj.name', label: 'AHJ' },
-    { id: 'status', label: 'Status' },
-    { id: 'actions', label: '', sortable: false }
-  ];
-
+  }
+  
   return (
-    <div className="w-full h-full flex flex-col">
-      <h2 className="text-xl font-bold text-white mb-4">MY PROJECTS</h2>
-      <div className="rounded-md border border-[#333333] flex-1 h-full flex flex-col">
-        {/* Table header */}
-        <div className="bg-[#1e1e1e] sticky top-0 z-10">
-          <div className="grid grid-cols-6 divide-x divide-[#333333]">
-            {tableHeaders.map((header) => (
-              <div 
-                key={header.id}
-                className={`px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider ${header.sortable !== false ? 'cursor-pointer' : ''}`}
-                onClick={() => header.sortable !== false && handleSort(header.id)}
-              >
-                {header.label} {header.sortable !== false && renderSortIndicator(header.id)}
-              </div>
-            ))}
-          </div>
-        </div>
-        
-        {/* Table body - scrollable */}
+    <div className="h-full flex flex-col">
+      {/* Table header */}
+      <div className="grid grid-cols-6 gap-4 bg-gray-800 p-3 font-medium text-gray-300 border-b border-gray-700">
         <div 
-          className="flex-1 overflow-auto bg-[#121212] scroll-smooth" 
-          ref={scrollContainerRef}
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('name')}
         >
-          {visibleItems.length === 0 ? (
-            <div className="px-6 py-4 text-center text-gray-400">
-              No projects found
-            </div>
-          ) : (
-            <div className="divide-y divide-[#333333]">
-              {visibleItems.map((project) => (
-                <div 
-                  key={project.id}
-                  className={`grid grid-cols-6 hover:bg-[#1e1e1e] ${selectedProject?.id === project.id ? 'bg-[#333333]' : ''} ${
-                    project.isMasked ? 'opacity-70' : ''
-                  }`}
-                  onClick={() => handleSelectProject(project)}
-                >
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    {project.isMasked ? (
-                      <div className="flex items-center">
-                        <span className="text-gray-400">Non-active project</span>
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
-                          Restricted
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="truncate block">{project.customer_name || 'Unknown'}</span>
-                    )}
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    <span className="truncate block">{project.address || 'No address'}</span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
-                    <div className="flex items-center">
-                      <span className="mr-2 truncate">{project.utility.name}</span>
-                      {getUtilityClassification(project)}
-                    </div>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden">
-                    <div className="flex items-center">
-                      <span className="mr-2 truncate">{project.ahj.name}</span>
-                      {getAHJClassification(project)}
-                    </div>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-                    <span className="truncate block">{project.status}</span>
-                  </div>
-                  <div className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button
+          Project Name {renderSortIndicator('name')}
+        </div>
+        <div 
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('address')}
+        >
+          Address {renderSortIndicator('address')}
+        </div>
+        <div 
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('ahj')}
+        >
+          AHJ {renderSortIndicator('ahj')}
+        </div>
+        <div 
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('utility')}
+        >
+          Utility {renderSortIndicator('utility')}
+        </div>
+        <div 
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('status')}
+        >
+          Status {renderSortIndicator('status')}
+        </div>
+        <div 
+          className="cursor-pointer hover:text-white flex items-center"
+          onClick={() => handleSort('45day')}
+        >
+          45-Day {renderSortIndicator('45day')}
+        </div>
+      </div>
+      
+      {/* Table body - scrollable */}
+      <div 
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto"
+      >
+        {visibleItems.map((project) => {
+          // Determine if this project should be masked
+          const isComplete = project.status && 
+            (project.status.toLowerCase() === 'complete' || 
+             project.status.toLowerCase() === 'completed' ||
+             project.status.toLowerCase().includes('complete'));
+          
+          const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
+          // No admin users in the system, so only check completion status and assignment
+          const isMasked = !(isComplete || isAssignedToCurrentUser);
+          
+          // Get classification badges
+          const ahjClassification = project.ahj?.classification || 'unknown';
+          const utilityClassification = project.utility?.classification || 'unknown';
+          const financierClassification = project.financier?.classification || 'unknown';
+          
+          const ahjBadgeClass = getClassificationBadgeClass(ahjClassification);
+          const utilityBadgeClass = getClassificationBadgeClass(utilityClassification);
+          const financierBadgeClass = getClassificationBadgeClass(financierClassification);
+          
+          return (
+            <div 
+              key={project.id}
+              className={`
+                grid grid-cols-6 gap-4 p-3 border-b border-gray-700 hover:bg-gray-800 cursor-pointer
+                ${selectedProject?.id === project.id ? 'bg-gray-800' : ''}
+              `}
+              onClick={() => handleSelectProject(project)}
+            >
+              <div className="truncate">
+                {isMasked ? 'Project details restricted' : (project.id || 'No project id')}
+              </div>
+              <div className="truncate">
+                {isMasked ? 'Project details restricted' : (project.address || 'No address')}
+              </div>
+              <div className="flex items-center">
+                {isMasked ? (
+                  'Restricted'
+                ) : (
+                  <>
+                    <span className="truncate">{project.ahj?.name || 'Unknown'}</span>
+                    <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${ahjBadgeClass}`}>
+                      {formatClassification(ahjClassification)}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center">
+                {isMasked ? (
+                  'Restricted'
+                ) : (
+                  <>
+                    <span className="truncate">{project.utility?.name || 'Unknown'}</span>
+                    <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${utilityBadgeClass}`}>
+                      {formatClassification(utilityClassification)}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="truncate">
+                {isMasked ? 'Restricted' : (project.status || 'Unknown')}
+              </div>
+              <div className="flex items-center space-x-2">
+                {isMasked ? (
+                  'Restricted'
+                ) : (
+                  <>
+                    <span>{isQualified(project) ? 'Yes' : 'No'}</span>
+                    <button 
+                      className="p-1 bg-blue-600 rounded hover:bg-blue-700 flex items-center"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (project.latitude && project.longitude) {
-                          onViewOnMap(project);
-                        }
+                        onViewOnMap(project);
                       }}
-                      className={`flex items-center justify-end ${project.latitude && project.longitude ? 'text-gray-300 hover:text-white' : 'text-gray-800 cursor-default'}`}
-                      disabled={!project.latitude || !project.longitude}
-                      title={project.latitude && project.longitude ? 'View on map' : 'No coordinates available'}
                     >
-                      <FiMapPin className="mr-1" />
-                      Map
+                      <FiMapPin size={16} />
                     </button>
-                  </div>
-                </div>
-              ))}
-              
-              {/* Loading indicator */}
-              {isLoading && (
-                <div className="py-4 text-center text-gray-400">
-                  Loading more...
-                </div>
-              )}
-              
-              {/* End of list indicator */}
-              {!isLoading && loadedCount >= projects.length && projects.length > 0 && (
-                <div className="py-4 text-center text-gray-500 text-sm">
-                  Showing all {projects.length} projects
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
-          )}
-        </div>
+          );
+        })}
+        
+        {/* Loading more indicator */}
+        {loadedCount < sortedProjects.length && (
+          <div className="p-3 text-center text-gray-400">
+            Loading more projects...
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { AHJ, Project, ProjectFilter } from '@/utils/types';
+import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
+import { useData } from '@/contexts/DataContext';
 import { getClassificationMapColor, getClassificationBadgeClass } from '@/utils/classificationColors';
 import { getMapboxToken } from '@/utils/mapbox';
 import { mapQualificationStatus, isQualified } from '@/utils/qualificationStatus';
@@ -11,39 +12,60 @@ import ToggleOption from './ToggleOption';
 import EmptyState from './EmptyState';
 
 interface MapViewProps {
-  ahjs?: AHJ[];
-  selectedAHJ?: AHJ | null;
-  onSelectAHJ?: (ahj: AHJ) => void;
-  // Removed selectedUtility as we're now using filter panel exclusively
-  projects?: Project[];
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
-  filters?: ProjectFilter[];
-  utilities?: any[];
 }
 
 const MapView: React.FC<MapViewProps> = ({
-  ahjs,
-  selectedAHJ,
-  onSelectAHJ,
-  // selectedUtility removed as we're now using filter panel exclusively
-  projects,
   selectedProject,
   onSelectProject,
-  filters = [],
-  utilities = [],
 }) => {
-  const { userProfile } = useAuth();
+  // Use DataContext for data and filters
+  const { 
+    projects, 
+    ahjs, 
+    utilities,
+    filters,
+    isLoading,
+    error,
+    addFilter,
+    removeFilter,
+    clearFilters,
+    showOnlyMyProjects,
+    toggleShowOnlyMyProjects,
+    show45DayQualified,
+    set45DayFilter
+  } = useData();
+  
+  // Log data received by MapView component
+  useEffect(() => {
+    // console.log('===== MAPVIEW COMPONENT DATA =====');
+    // console.log('Projects received:', projects.length);
+    // console.log('AHJs received:', ahjs.length);
+    // console.log('Utilities received:', utilities.length);
+    // console.log('Filters:', filters);
+    // console.log('===== END MAPVIEW COMPONENT DATA =====');
+  }, [projects, ahjs, utilities, filters]);
+  
+  const { userProfile, isAdmin } = useAuth();
+  
+  // Map refs and state
   const mapContainer = useRef<HTMLDivElement>(null);
-  const cardListRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const cardListRef = useRef<HTMLDivElement>(null);
+  
+  // Map position state
   const [lng, setLng] = useState(-111.8910); // Default to Utah
   const [lat, setLat] = useState(40.7608);
   const [zoom, setZoom] = useState(9);
   const [mapLoaded, setMapLoaded] = useState(false);
+  
+  // Project selection and display state
   const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
   const [visibleProjects, setVisibleProjects] = useState<Project[]>([]);
+  
+  // UI interaction state
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
@@ -51,8 +73,6 @@ const MapView: React.FC<MapViewProps> = ({
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(false);
   const [mapMoved, setMapMoved] = useState(false);
-  const [showOnlyMyProjects, setShowOnlyMyProjects] = useState(false);
-  const [showKefeProjects, setShowKefeProjects] = useState(false); // New state for "Test" filter
   
   // Flag to track if map movements should be allowed
   const [allowMapMovement, setAllowMapMovement] = useState<{
@@ -102,90 +122,22 @@ const MapView: React.FC<MapViewProps> = ({
     };
   };
 
-  // Function to prepare heatmap data from projects
-  const prepareHeatmapData = (projectsData: Project[]) => {
-    console.log('[MapView] Preparing heatmap data for', projectsData.length, 'projects');
-    
-    // Filter out projects with missing coordinates
-    const validProjects = projectsData.filter(project => 
-      typeof project.latitude === 'number' && 
-      typeof project.longitude === 'number'
-    );
-    
-    console.log('[MapView] Found', validProjects.length, 'projects with valid coordinates');
-    
-    // Count 45-day qualified projects
-    const qualified45DayProjects = validProjects.filter(project => 
-      isQualified(project.qualifies45Day)
-    );
-    
-    console.log('[MapView] 45-day qualified projects:', qualified45DayProjects.length);
-    
-    // Create features for the heatmap
-    return {
-      type: 'FeatureCollection' as const,
-      features: validProjects.map(project => {
-        // Get classification values
-        const ahjClass = project.ahj?.classification || '';
-        const utilityClass = project.utility?.classification || '';
-        const is45DayQualified = isQualified(project.qualifies45Day);
-        
-        // Base weight calculation - start with a low default weight
-        let baseWeight = 0.1;
-        
-        // Set base weight for 45-day qualified projects
-        if (is45DayQualified) {
-          baseWeight = 1.0;
-        }
-        
-        // Apply AHJ classification multiplier
-        let ahjMultiplier = 1.0; // Default multiplier
-        if (ahjClass === 'A') {
-          ahjMultiplier = 2.0;
-        } else if (ahjClass === 'B') {
-          ahjMultiplier = 1.5;
-        } else if (ahjClass === 'C') {
-          ahjMultiplier = 1.0;
-        } else {
-          ahjMultiplier = 0.5; // Unknown classification
-        }
-        
-        // Apply Utility classification multiplier
-        let utilityMultiplier = 1.0; // Default multiplier
-        if (utilityClass === 'A') {
-          utilityMultiplier = 2.0;
-        } else if (utilityClass === 'B') {
-          utilityMultiplier = 1.5;
-        } else if (utilityClass === 'C') {
-          utilityMultiplier = 1.0;
-        } else {
-          utilityMultiplier = 0.5; // Unknown classification
-        }
-        
-        // Calculate final weight
-        const finalWeight = baseWeight * ahjMultiplier * utilityMultiplier;
-        
-        // Log high value projects
-        if (finalWeight >= 3.0) {
-          console.log(`[MapView] HIGH VALUE PROJECT: Weight ${finalWeight.toFixed(2)} at [${project.longitude}, ${project.latitude}] (45-day: ${is45DayQualified}, AHJ: ${ahjClass}, Utility: ${utilityClass})`);
-        }
-        
-        return {
-          type: 'Feature' as const,
-          properties: {
-            id: project.id,
-            ahjClass,
-            utilityClass,
-            is45DayQualified,
-            weight: finalWeight
-          },
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [project.longitude || 0, project.latitude || 0]
-          }
-        };
-      })
-    };
+  // Calculate distance between two points using Haversine formula
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const d = R * c; // Distance in km
+    return d;
+  };
+  
+  const deg2rad = (deg: number): number => {
+    return deg * (Math.PI/180);
   };
 
   // Effect to handle window resize events
@@ -193,11 +145,10 @@ const MapView: React.FC<MapViewProps> = ({
     const handleResize = () => {
       try {
         if (mapRef.current) {
-          console.log('[MapView] Window resize detected, resizing map');
           mapRef.current.resize();
         }
       } catch (error) {
-        console.error('[MapView] Error resizing map:', error);
+        // Silent error handling for map resize
       }
     };
     
@@ -215,20 +166,15 @@ const MapView: React.FC<MapViewProps> = ({
     // Clean up previous map instance if it exists
     try {
       if (mapRef.current) {
-        console.log('[MapView] Cleaning up previous map instance');
-        // Check if the map instance is valid and has the remove method
-        if (mapRef.current && typeof mapRef.current.remove === 'function') {
+        if (typeof mapRef.current.remove === 'function') {
           mapRef.current.remove();
-        } else {
-          console.warn('[MapView] Map instance exists but remove method is not available');
         }
-        mapRef.current = null;
       }
     } catch (error) {
-      console.error('[MapView] Error cleaning up map:', error);
-      // Just set to null if we can't remove it properly
-      mapRef.current = null;
+      // Silent error handling for map cleanup
     }
+    
+    mapRef.current = null;
     
     const initializeMap = async () => {
       // Set Mapbox access token using the utility function
@@ -236,7 +182,7 @@ const MapView: React.FC<MapViewProps> = ({
       
       // Check if token is available
       if (!mapboxgl.accessToken) {
-        console.error('[MapView] Mapbox token is missing. Please check your environment variables.');
+        // Cannot proceed without a Mapbox token
         return;
       }
       
@@ -272,78 +218,67 @@ const MapView: React.FC<MapViewProps> = ({
       
       // Set up event handlers
       map.on('load', () => {
-        console.log('[MapView] Map loaded');
         setMapLoaded(true);
         
-        // Force a resize after load to ensure proper rendering
+        // Force a resize after load to fix any sizing issues
         setTimeout(() => {
           try {
-            if (map) {
-              console.log('[MapView] Forcing map resize after load');
-              map.resize();
-            }
+            map.resize();
           } catch (error) {
-            console.error('[MapView] Error during forced resize:', error);
+            // Silent error handling for map resize
           }
         }, 200);
         
-        // After map loads, trigger geolocation and find nearest projects
+        // Try to get user location and find nearby projects
         setTimeout(() => {
-          console.log('[MapView] Triggering geolocation');
-          geolocateControl.trigger();
-          
-          // Listen for the geolocate event to find nearest projects
-          geolocateControl.on('geolocate', (e) => {
-            if (!projects || projects.length === 0) return;
+          try {
+            // Get user's location from the map if available
+            const userLocation = mapRef.current?.getCenter();
             
-            const userLocation = {
-              longitude: e.coords.longitude,
-              latitude: e.coords.latitude
-            };
-            
-            console.log('[MapView] User location:', userLocation);
-            
-            // Find the 5 closest projects to the user's location
-            const projectsWithDistance = projects
-              .filter(p => p.latitude && p.longitude)
-              .map(project => {
-                const distance = calculateDistance(
-                  userLocation.latitude,
-                  userLocation.longitude,
-                  project.latitude!,
-                  project.longitude!
-                );
-                return { project, distance };
-              })
-              .sort((a, b) => a.distance - b.distance)
-              .slice(0, 5);
-            
-            if (projectsWithDistance.length === 0) return;
-            
-            console.log('[MapView] Nearest projects:', projectsWithDistance);
-            
-            // Create a bounds object to encompass all nearby projects and user location
-            const bounds = new mapboxgl.LngLatBounds();
-            
-            // Add user location to bounds
-            bounds.extend([userLocation.longitude, userLocation.latitude]);
-            
-            // Add each project's coordinates to the bounds
-            projectsWithDistance.forEach(({ project }) => {
-              bounds.extend([project.longitude!, project.latitude!]);
-            });
-            
-            // Fit the map to the bounds with padding - only during initial setup
-            if (allowMapMovement.initial) {
-              map.fitBounds(bounds, {
-                padding: 100,
-                maxZoom: 12
+            if (userLocation && projects.length > 0) {
+              const projectsWithDistance = projects
+                .filter(project => project.latitude && project.longitude)
+                .map(project => {
+                  const distance = calculateDistance(
+                    userLocation.lat,
+                    userLocation.lng,
+                    project.latitude!,
+                    project.longitude!
+                  );
+                  return { project, distance };
+                })
+                .sort((a, b) => a.distance - b.distance)
+                .slice(0, 5);
+              
+              if (projectsWithDistance.length === 0) return;
+              
+              // Process nearest projects
+              
+              // Create a bounds object to encompass all nearby projects and user location
+              const bounds = new mapboxgl.LngLatBounds();
+              
+              // Add user location to bounds
+              bounds.extend([userLocation.lng, userLocation.lat]);
+              
+              // Add each project's coordinates to the bounds
+              projectsWithDistance.forEach(({ project }) => {
+                bounds.extend([project.longitude!, project.latitude!]);
               });
               
-              // Disable initial movement after first use
-              setAllowMapMovement(prev => ({ ...prev, initial: false }));
+              // Fit the map to the bounds with padding - only during initial setup
+              if (allowMapMovement.initial) {
+                map.fitBounds(bounds, {
+                  padding: 100,
+                  maxZoom: 12
+                });
+                
+                // Disable initial movement after first use
+                setAllowMapMovement(prev => ({ ...prev, initial: false }));
+              }
             }
-          });
+          } catch (error) {
+            // Silent error handling for location processing
+          }
         }, 1000); // Short delay to ensure map is fully loaded
         
         // Hide city labels until zoomed in
@@ -361,14 +296,14 @@ const MapView: React.FC<MapViewProps> = ({
                 map.setLayoutProperty(layer, 'visibility', visibility);
               }
             } catch (error) {
-              console.log(`[MapView] Layer ${layer} not found in map style, skipping`);
+              // Layer not found in map style, skipping
             }
           });
         });
       });
       
       map.on('error', (e) => {
-        console.error('[MapView] Map error:', e);
+        // Handle map error silently
       });
       
     };
@@ -383,694 +318,431 @@ const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
-  // Calculate distance between two points using Haversine formula
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2); 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    const d = R * c; // Distance in km
-    return d;
-  };
-  
-  const deg2rad = (deg: number): number => {
-    return deg * (Math.PI/180);
-  };
-
   // Update visible projects based on map bounds
-  const updateVisibleProjects = (currentMap: mapboxgl.Map) => {
+  const updateVisibleProjects = useCallback((currentMap: mapboxgl.Map) => {
     if (!currentMap || !projects || projects.length === 0) {
-      console.log('Cannot update visible projects: map or projects not available');
+      // Map or projects not available
       return;
     }
 
     const bounds = currentMap.getBounds();
     if (!bounds) {
-      console.log('Cannot update visible projects: map bounds not available');
+      // Map bounds not available
       return;
     }
 
-    console.log(`Total projects: ${projects.length}`);
-    
+    // Filter projects to those within the current map bounds
     const visible = projects.filter(project => {
       if (!project.latitude || !project.longitude) {
-        console.log(`Project ${project.id} has no coordinates`);
         return false;
       }
       
       const isInBounds = bounds.contains([project.longitude, project.latitude]);
-      if (isInBounds) {
-        console.log(`Project ${project.id} is in bounds at ${project.latitude}, ${project.longitude}`);
-      }
       return isInBounds;
     });
 
-    console.log(`Found ${visible.length} visible projects in current map view`);
+    // Update visible projects
     setVisibleProjects(visible);
-  };
+  }, [projects]);
 
   // Update visible projects when projects changes
   useEffect(() => {
     if (!mapRef.current || !mapLoaded || !projects) return;
     updateVisibleProjects(mapRef.current);
-  }, [projects, mapLoaded]);
+  }, [projects, mapLoaded, updateVisibleProjects]);
 
   // Update visible projects whenever map moves or projects change
   useEffect(() => {
     if (!mapRef.current || !projects || projects.length === 0 || !mapLoaded) return;
     
-    // Get the current map bounds
-    const bounds = mapRef.current.getBounds();
-    if (!bounds) return;
+    const map = mapRef.current;
     
-    // Filter projects to only those within the current map bounds
-    const inBoundsProjects = projects.filter(project => {
-      if (!project.latitude || !project.longitude) return false;
-      
-      // Add a buffer around the map bounds (approximately 5% of the map width/height)
-      const westBuffer = bounds.getWest() - (bounds.getEast() - bounds.getWest()) * 0.05;
-      const eastBuffer = bounds.getEast() + (bounds.getEast() - bounds.getWest()) * 0.05;
-      const southBuffer = bounds.getSouth() - (bounds.getNorth() - bounds.getSouth()) * 0.05;
-      const northBuffer = bounds.getNorth() + (bounds.getNorth() - bounds.getSouth()) * 0.05;
-      
-      return (
-        project.longitude >= westBuffer &&
-        project.longitude <= eastBuffer &&
-        project.latitude >= southBuffer &&
-        project.latitude <= northBuffer
-      );
-    });
-    
-    console.log(`Found ${inBoundsProjects.length} projects in current map view`);
-    setVisibleProjects(inBoundsProjects);
-  }, [projects, mapMoved, mapLoaded]);
-
-  // Add move end event to update visible AHJs
-  useEffect(() => {
-    const currentMap = mapRef.current;
-    if (!currentMap || !mapLoaded) return;
-
-    currentMap.on('moveend', () => {
-      console.log('Map moved, updating visible projects');
-      updateVisibleProjects(currentMap);
-      setMapMoved(prev => !prev); // Toggle to force re-render
-    });
-
-    // Also update on load
-    currentMap.on('load', () => {
-      console.log('Map loaded, updating visible projects');
-      updateVisibleProjects(currentMap);
-    });
-  }, [mapLoaded]);
-
-  // Check scroll position to show/hide arrows
-  useEffect(() => {
-    const checkScrollPosition = () => {
-      if (!cardListRef.current) return;
-
-      const { scrollLeft, scrollWidth, clientWidth } = cardListRef.current;
-      setShowLeftArrow(scrollLeft > 0);
-      setShowRightArrow(scrollLeft < scrollWidth - clientWidth - 10); // 10px buffer
+    // Add event listeners for map movement
+    const moveEndHandler = () => {
+      setMapMoved(true);
+      updateVisibleProjects(map);
     };
-
-    const cardList = cardListRef.current;
-    if (cardList) {
-      cardList.addEventListener('scroll', checkScrollPosition);
-      // Initial check
-      checkScrollPosition();
-    }
-
+    
+    map.on('moveend', moveEndHandler);
+    
+    // Initial update
+    updateVisibleProjects(map);
+    
+    // Cleanup
     return () => {
-      if (cardList) {
-        cardList.removeEventListener('scroll', checkScrollPosition);
-      }
+      map.off('moveend', moveEndHandler);
     };
-  }, [visibleProjects]);
+  }, [mapLoaded, projects, updateVisibleProjects]);
 
-  // Handle mouse down for dragging
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!cardListRef.current) return;
-
-    setIsDragging(true);
-    setStartX(e.pageX);
-    setScrollLeft(cardListRef.current.scrollLeft);
-  };
-
-  // Handle mouse leave and mouse up
-  const handleMouseUpOrLeave = () => {
-    setIsDragging(false);
-  };
-
-  // Handle mouse move for dragging
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !cardListRef.current) return;
-
-    e.preventDefault();
-    const x = e.pageX;
-    const walk = (x - startX) * 2; // Scroll speed multiplier
-    cardListRef.current.scrollLeft = scrollLeft - walk;
-  };
-
-  // Scroll functions for card list
-  const scrollCardListLeft = () => {
-    if (cardListRef.current) {
-      cardListRef.current.scrollBy({ left: -300, behavior: 'smooth' });
-    }
-  };
-
-  const scrollCardListRight = () => {
-    if (cardListRef.current) {
-      cardListRef.current.scrollBy({ left: 300, behavior: 'smooth' });
-    }
-  };
-
-  // Handle arrow click
-  const handleArrowClick = (direction: 'left' | 'right') => {
-    if (!cardListRef.current) return;
-
-    const scrollAmount = 300; // Adjust as needed
-    const currentScroll = cardListRef.current.scrollLeft;
-
-    cardListRef.current.scrollTo({
-      left: direction === 'left' ? currentScroll - scrollAmount : currentScroll + scrollAmount,
-      behavior: 'smooth'
-    });
-  };
-
-  // Handle card navigation
-  const handleNextCard = () => {
-    if (currentCardIndex < visibleProjects.length - 3) {
-      setCurrentCardIndex(currentCardIndex + 1);
-    }
-  };
-
-  const handlePrevCard = () => {
-    if (currentCardIndex > 0) {
-      setCurrentCardIndex(currentCardIndex - 1);
-    }
-  };
-
-  // Handle project click
-  const handleProjectClick = (project: Project) => {
-    // If the project is already selected, do nothing
-    if (localSelectedProject && localSelectedProject.id === project.id) {
-      return;
-    }
-    
-    setLocalSelectedProject(project);
-    
-    // Call the parent component's onSelectProject callback
-    if (onSelectProject) {
-      onSelectProject(project);
-    }
-    
-    // Fly to the project location - only if user initiated the selection
-    if (mapRef.current && project.latitude && project.longitude && allowMapMovement.selection) {
-      mapRef.current.flyTo({
-        center: [project.longitude, project.latitude],
-        zoom: 14,
-        essential: true
-      });
-    }
-  };
-
-  // Update local state when prop changes
+  // Update markers when visible projects change
   useEffect(() => {
-    // Only update if the selectedProject prop changes directly
-    // This prevents re-focusing when filters are applied or pins are dropped
-    if (selectedProject !== localSelectedProject) {
-      setLocalSelectedProject(selectedProject);
+    if (!mapRef.current || !mapLoaded) return;
+    
+    // Clear existing markers
+    markersRef.current.forEach(marker => marker.remove());
+    markersRef.current = [];
+    
+    const map = mapRef.current;
+    
+    // Add new markers for each visible project
+    visibleProjects.forEach(project => {
+      if (!project.latitude || !project.longitude) return;
       
-      // Fly to the project location if a new project is selected - only if user initiated
-      if (selectedProject && selectedProject.latitude && selectedProject.longitude && 
-          mapRef.current && allowMapMovement.selection) {
+      // Determine if this project should be masked
+      const isComplete = project.status && 
+        (project.status.toLowerCase() === 'complete' || 
+         project.status.toLowerCase() === 'completed' ||
+         project.status.toLowerCase().includes('complete'));
+      
+      const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
+      // We don't have admin users right now, so we're simplifying the masking logic
+      const shouldMask = !(isComplete || isAssignedToCurrentUser);
+      
+      // Skip adding exact location for masked projects to protect sensitive information
+      if (shouldMask) {
+        // For masked projects, we could either:
+        // 1. Not show them at all
+        // 2. Show them with a different icon
+        // 3. Show them with a slight location offset
+        // 4. Only show them at certain zoom levels
+        
+        // For now, we'll use approach #2 - show with a different icon
+        const el = document.createElement('div');
+        el.className = 'masked-marker';
+        el.style.backgroundImage = `url(/pin_grey.svg)`;
+        el.style.width = '24px';
+        el.style.height = '24px';
+        el.style.backgroundSize = '100%';
+        el.style.opacity = '0.6'; // Make it semi-transparent
+        
+        const marker = new mapboxgl.Marker(el)
+          .setLngLat([project.longitude, project.latitude])
+          .addTo(map);
+        
+        marker.getElement().addEventListener('click', () => {
+          handleProjectSelect(project);
+        });
+        
+        markersRef.current.push(marker);
+        return;
+      }
+      
+      // For unmasked projects, show normal markers with classification colors
+      const classification = project.ahj?.classification || 'unknown';
+      const pinColor = getClassificationMapColor(classification);
+      
+      const el = document.createElement('div');
+      el.className = 'marker';
+      el.style.backgroundImage = `url(/pin_${pinColor}.svg)`;
+      el.style.width = '24px';
+      el.style.height = '24px';
+      el.style.backgroundSize = '100%';
+      
+      // Highlight selected project
+      if (selectedProject && project.id === selectedProject.id) {
+        el.style.width = '32px';
+        el.style.height = '32px';
+        el.style.zIndex = '10';
+      }
+      
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([project.longitude, project.latitude])
+        .addTo(map);
+      
+      marker.getElement().addEventListener('click', () => {
+        handleProjectSelect(project);
+      });
+      
+      markersRef.current.push(marker);
+    });
+  }, [visibleProjects, selectedProject, mapLoaded, userProfile]);
+
+  // Update local selected project when prop changes
+  useEffect(() => {
+    setLocalSelectedProject(selectedProject);
+    
+    // If a project is selected and we have map access, fly to it
+    if (selectedProject && mapRef.current && mapLoaded && allowMapMovement.selection) {
+      const { latitude, longitude } = selectedProject;
+      
+      if (latitude && longitude) {
         mapRef.current.flyTo({
-          center: [selectedProject.longitude, selectedProject.latitude],
+          center: [longitude, latitude],
           zoom: 14,
           essential: true
         });
       }
     }
-  }, [selectedProject]);
+  }, [selectedProject, mapLoaded, allowMapMovement.selection]);
 
-  // Function to create markers for projects
-  const createMarkersForProjects = (projectsToShow: Project[]) => {
-    if (!mapRef.current) return [];
+
+
+  // Handle project selection
+  const handleProjectSelect = (project: Project) => {
+    setLocalSelectedProject(project);
     
-    const markers = projectsToShow
-      .map(project => {
-        // Skip projects without coordinates
-        if (typeof project.latitude !== 'number' || typeof project.longitude !== 'number') return null;
-        
-        // Get pin color based on AHJ classification
-        let pinImage = '/pin_grey.svg';
-        
-        if (project.ahj?.classification) {
-          if (project.ahj.classification === 'A') {
-            pinImage = '/pin_green_active.svg';
-          } else if (project.ahj.classification === 'B') {
-            pinImage = '/pin_blue_active.svg';
-          } else if (project.ahj.classification === 'C') {
-            pinImage = '/pin_orange_active.svg';
-          } else {
-            pinImage = '/pin_grey_active.svg';
-          }
-        }
-        
-        // Create marker element
-        const el = document.createElement('div');
-        el.className = 'marker project-pin'; // Add project-pin class for easy selection
-        el.setAttribute('data-pin-type', 'project'); // Add data attribute for better identification
-        el.style.backgroundImage = `url(${pinImage})`;
-        el.style.width = '30px';
-        el.style.height = '30px';
-        el.style.backgroundSize = 'contain';
-        el.style.backgroundRepeat = 'no-repeat';
-        el.style.cursor = 'pointer';
-        
-        // Create popup
-        const popup = new mapboxgl.Popup({
-          offset: 25,
-          closeButton: false,
-          className: 'custom-popup'
-        }).setHTML(`
-          <div class="p-2">
-            <h3 class="text-sm font-semibold">${project.address}</h3>
-            <p class="text-xs">AHJ: ${project.ahj?.name || 'Unknown'}</p>
-            <p class="text-xs">Status: ${project.status || 'Unknown'}</p>
-          </div>
-        `);
-        
-        // Create and return marker
-        const marker = new mapboxgl.Marker(el)
-          .setLngLat([project.longitude, project.latitude])
-          .setPopup(popup)
-          .addTo(mapRef.current!);
-        
-        // Add click handler
-        el.addEventListener('click', () => {
-          handleProjectClick(project);
-        });
-        
-        return marker;
-      })
-      .filter(Boolean) as mapboxgl.Marker[];
-    
-    // Store markers for later reference
-    return markers;
+    if (onSelectProject) {
+      onSelectProject(project);
+    }
   };
 
-  // Add project markers to map
-  useEffect(() => {
-    if (!mapRef.current || !mapLoaded) return;
-    
-    console.log('[MapView] Adding markers for', projects?.length || 0, 'projects');
-    
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.remove());
-    
-    const unmaskedProjects = projects?.filter(project => !project.isMasked) || [];
-    console.log('[MapView] Showing', unmaskedProjects.length, 'unmasked project pins');
-    
-    const newMarkers = createMarkersForProjects(unmaskedProjects);
-    markersRef.current = newMarkers;
-  }, [projects, mapLoaded]);
-
-  // Function to find projects within radius
-  const findProjectsInRadius = (
-    pinLat: number, 
-    pinLng: number, 
-    radiusInMiles: number, 
-    allProjects: Project[]
-  ): Project[] => {
-    // Convert miles to kilometers (Haversine uses km)
-    const radiusInKm = radiusInMiles * 1.60934;
-    
-    return allProjects.filter(project => {
-      if (!project.latitude || !project.longitude) return false;
-      
-      // Calculate distance using Haversine formula
-      const distance = calculateHaversineDistance(
-        pinLat, pinLng, 
-        project.latitude || 0, project.longitude || 0
-      );
-      
-      // Return projects within the radius
-      return distance <= radiusInKm;
-    });
+  // Handle filter addition
+  const handleAddFilter = (filter: ProjectFilter) => {
+    addFilter(filter);
   };
   
-  // Haversine formula implementation
-  const calculateHaversineDistance = (
-    lat1: number, lon1: number, 
-    lat2: number, lon2: number
-  ): number => {
-    const R = 6371; // Earth's radius in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c; // Distance in km
-  };
-  
-  // Function to determine servicing entities by majority vote
-  const determineServicingEntitiesByMajority = (
-    nearbyProjects: Project[]
-  ): { 
-    ahj: { id: string; name: string; classification: string } | null;
-    utility: { id: string; name: string; classification: string } | null;
-  } => {
-    // Count occurrences
-    const ahjCounts: Record<string, { count: number; name: string; classification: string }> = {};
-    const utilityCounts: Record<string, { count: number; name: string; classification: string }> = {};
-    
-    nearbyProjects.forEach(project => {
-      // Count AHJs
-      if (project.ahj?.id) {
-        if (!ahjCounts[project.ahj.id]) {
-          ahjCounts[project.ahj.id] = { 
-            count: 0, 
-            name: project.ahj.name || 'Unknown',
-            classification: project.ahj.classification || 'B'
-          };
-        }
-        ahjCounts[project.ahj.id].count++;
-      }
-      
-      // Count utilities
-      if (project.utility?.id) {
-        if (!utilityCounts[project.utility.id]) {
-          utilityCounts[project.utility.id] = { 
-            count: 0, 
-            name: project.utility.name || 'Unknown',
-            classification: project.utility.classification || 'B'
-          };
-        }
-        utilityCounts[project.utility.id].count++;
-      }
-    });
-    
-    // Find the most common entities
-    let topAHJ = null;
-    let topUtility = null;
-    let maxAHJCount = 0;
-    let maxUtilityCount = 0;
-    
-    // Find top AHJ
-    Object.entries(ahjCounts).forEach(([id, data]) => {
-      if (data.count > maxAHJCount) {
-        maxAHJCount = data.count;
-        topAHJ = { id, name: data.name, classification: data.classification };
-      }
-    });
-    
-    // Find top utility
-    Object.entries(utilityCounts).forEach(([id, data]) => {
-      if (data.count > maxUtilityCount) {
-        maxUtilityCount = data.count;
-        topUtility = { id, name: data.name, classification: data.classification };
-      }
-    });
-    
-    return {
-      ahj: topAHJ,
-      utility: topUtility
-    };
+  // Handle filter removal
+  const handleRemoveFilter = (filter: ProjectFilter) => {
+    removeFilter(filter.id || '');
   };
 
-  // Mouse event handlers for dragging
+  // Handle "My Projects" toggle
+  const handleMyProjectsToggle = () => {
+    toggleShowOnlyMyProjects();
+  };
+
+  // Handle 45-day qualified projects toggle
+  const handle45DayToggle = () => {
+    set45DayFilter(!show45DayQualified);
+  };
+
+  // Mouse event handlers for card carousel
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!cardListRef.current) return;
+    
+    setIsDragging(true);
+    setStartX(e.pageX - cardListRef.current.offsetLeft);
+    setScrollLeft(cardListRef.current.scrollLeft);
+  };
+  
   const handleMouseUp = () => {
     setIsDragging(false);
   };
-
+  
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !cardListRef.current) return;
+    
+    e.preventDefault();
+    const x = e.pageX - cardListRef.current.offsetLeft;
+    const walk = (x - startX) * 2; // Scroll speed multiplier
+    cardListRef.current.scrollLeft = scrollLeft - walk;
+  };
+  
   const handleMouseLeave = () => {
     setIsDragging(false);
   };
 
-  // Handle closing the selected project
-  const handleCloseProject = () => {
-    setLocalSelectedProject(null);
-    if (onSelectProject) {
-      onSelectProject(null);
-    }
-  };
-
-  // Render a project card
-  const renderProjectCard = (project: Project) => {
-    // Check if project belongs to current user
-    const isUserProject = project.rep_id && userProfile?.rep_id && project.rep_id === userProfile.rep_id;
+  // Check if arrows should be shown for card carousel
+  useEffect(() => {
+    if (!cardListRef.current) return;
     
-    return (
-      <div
-        key={project.id}
-        className={`flex-shrink-0 w-100 h-full p-4 rounded-md mr-4 cursor-pointer transition-all duration-200 ${
-          localSelectedProject?.id === project.id
-            ? 'bg-textured-neutral-800 border-2 border-neutral-300'
-            : 'bg-textured-neutral-900 border border-neutral-700 hover:border-neutral-500'
-        } ${project.isMasked ? 'bg-textured-neutral-800' : ''}`}
-        onClick={() => handleProjectClick(project)}
-      >
-        <div className="flex flex-col h-full">
-          <div className="flex justify-between items-start mb-2 w-100%">
-            <div className="flex items-start gap-2">
-              {isUserProject && (
-                <div 
-                  className="w-3 h-3 rounded-full bg-blue-500 mt-1 flex-shrink-0" 
-                  title="Assigned to you"
-                />
-              )}
-              <h3 className={`text-sm font-semibold truncate w-60 ${project.isMasked ? 'text-neutral-500' : ''}`}>{project.address || 'Unnamed'}</h3>
-            </div>
-            <div className="flex items-center gap-1">
-              {isQualified(project.qualifies45Day) && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900 text-green-100">
-                  45 Day
-                </span>
-              )}
-              <span
-                className={`inline-flex items-center px-2 py-1 rounded-sm text-xs font-medium ${getClassificationBadgeClass(project.ahj.classification)}`}
-              >
-                Class {project.ahj.classification || 'Unknown'}
-              </span>
-            </div>
-          </div>
+    const checkArrows = () => {
+      const container = cardListRef.current;
+      if (!container) return;
+      
+      setShowLeftArrow(container.scrollLeft > 0);
+      setShowRightArrow(container.scrollLeft < container.scrollWidth - container.clientWidth);
+    };
+    
+    const container = cardListRef.current;
+    container.addEventListener('scroll', checkArrows);
+    window.addEventListener('resize', checkArrows);
+    
+    // Initial check
+    checkArrows();
+    
+    return () => {
+      container.removeEventListener('scroll', checkArrows);
+      window.removeEventListener('resize', checkArrows);
+    };
+  }, [visibleProjects]);
 
-          <div className={`text-xs mb-1 ${project.isMasked ? 'text-neutral-500' : 'text-neutral-100'}`}>
-            AHJ: {project.ahj.name}
-          </div>
-
-          <div className={`text-xs mb-1 ${project.isMasked ? 'text-neutral-500' : 'text-neutral-100'}`}>
-            Utility: {project.utility.name}
-          </div>
-
-          <div className={`text-xs mb-auto ${project.isMasked ? 'text-neutral-500' : 'text-neutral-100'}`}>
-            Financier: {project.financier.name}
-          </div>
-
-          <div className="mt-2 text-xs text-neutral-500 flex justify-between">
-            <span>Status: {project.status || 'Unknown'}</span>
-            {project.isMasked && (
-              <span className="text-amber-500">Restricted Info</span>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const [localFilters, setLocalFilters] = useState<ProjectFilter[]>([]);
-  const [searchTerms, setSearchTerms] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
-
-  const handleSearch = (terms: string[]) => {
-    setSearchTerms(terms);
-  };
-
-  const handleViewModeChange = (mode: 'map' | 'list') => {
-    setViewMode(mode);
-  };
-
-  const toggleShowOnlyMyProjects = () => {
-    setShowOnlyMyProjects(!showOnlyMyProjects);
-  };
-
-  const toggleShowKefeProjects = () => {
-    setShowKefeProjects(!showKefeProjects);
-  };
-
-  const addFilter = (filter: ProjectFilter) => {
-    setLocalFilters([...localFilters, filter]);
-  };
-
-  const removeFilter = (filter: ProjectFilter) => {
-    setLocalFilters(localFilters.filter(f => !(f.type === filter.type && f.value === filter.value)));
-  };
-
-  const clearFilters = () => {
-    setLocalFilters([]);
+  // Scroll card carousel left/right
+  const scrollCarousel = (direction: 'left' | 'right') => {
+    if (!cardListRef.current) return;
+    
+    const container = cardListRef.current;
+    const scrollAmount = container.clientWidth * 0.8; // Scroll 80% of visible width
+    
+    if (direction === 'left') {
+      container.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
+    } else {
+      container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
   };
 
   // Memoize visible projects to prevent unnecessary re-renders
   const sortedVisibleProjects = useMemo(() => {
     return [...visibleProjects].sort((a, b) => {
       // First, prioritize unmasked projects over masked ones
-      if (!a.isMasked && b.isMasked) return -1;
-      if (a.isMasked && !b.isMasked) return 1;
+      const aIsComplete = a.status && 
+        (a.status.toLowerCase() === 'complete' || 
+         a.status.toLowerCase() === 'completed' ||
+         a.status.toLowerCase().includes('complete'));
+      
+      const bIsComplete = b.status && 
+        (b.status.toLowerCase() === 'complete' || 
+         b.status.toLowerCase() === 'completed' ||
+         b.status.toLowerCase().includes('complete'));
+      
+      const aIsAssignedToCurrentUser = a.rep_id === userProfile?.rep_id;
+      const bIsAssignedToCurrentUser = b.rep_id === userProfile?.rep_id;
+      
+      const aIsMasked = !(aIsComplete || aIsAssignedToCurrentUser);
+      const bIsMasked = !(bIsComplete || bIsAssignedToCurrentUser);
+      
+      if (!aIsMasked && bIsMasked) return -1;
+      if (aIsMasked && !bIsMasked) return 1;
       
       // Within each group (masked or unmasked), prioritize user's own projects
-      const aIsUserProject = a.rep_id && userProfile?.rep_id && a.rep_id === userProfile.rep_id;
-      const bIsUserProject = b.rep_id && userProfile?.rep_id && b.rep_id === userProfile.rep_id;
+      if (aIsAssignedToCurrentUser && !bIsAssignedToCurrentUser) return -1;
+      if (!aIsAssignedToCurrentUser && bIsAssignedToCurrentUser) return 1;
       
-      if (aIsUserProject && !bIsUserProject) return -1;
-      if (!aIsUserProject && bIsUserProject) return 1;
+      // Then sort by 45-day qualification
+      const aIs45Day = isQualified(a);
+      const bIs45Day = isQualified(b);
       
-      // Then sort by classification
-      const getClassValue = (project: Project) => {
-        const classification = project.ahj?.classification;
-        
-        if (classification === 'A') return 1;
-        if (classification === 'B') return 2;
-        if (classification === 'C') return 3;
-        return 4;
-      };
-      
-      return getClassValue(a) - getClassValue(b);
+      if (aIs45Day && !bIs45Day) return -1;
+      if (!aIs45Day && bIs45Day) return 1;
+      // Finally sort alphabetically by name or id if name is not available
+      return (a.address || a.id || '').localeCompare(b.address || b.id || '');
     });
   }, [visibleProjects, userProfile]);
 
-  return (
-    <div className="relative w-full h-full">
-      <div ref={mapContainer} className="w-full h-full" />
+  // Render project cards for the carousel
+  const renderProjectCards = () => {
+    if (sortedVisibleProjects.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-full w-full p-4">
+          <EmptyState 
+            title="No projects in this area" 
+            message="Try zooming out or panning to see more projects."
+            icon="map"
+          />
+        </div>
+      );
+    }
+    
+    return sortedVisibleProjects.map((project, index) => {
+      // Determine if this project should be masked
+      const isComplete = project.status && 
+        (project.status.toLowerCase() === 'complete' || 
+         project.status.toLowerCase() === 'completed' ||
+         project.status.toLowerCase().includes('complete'));
       
-      {/* Improved Filter Panel */}
-      <ImprovedFilterPanel
-        filters={[]} // Pass empty filters array or implement filters logic
-        addFilter={() => {}} // Implement filter adding logic
-        removeFilter={() => {}} // Implement filter removing logic
-        clearFilters={() => {}} // Implement clear filters logic
-        showOnlyMyProjects={showOnlyMyProjects}
-        toggleShowOnlyMyProjects={toggleShowOnlyMyProjects}
+      const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
+      // We don't have admin users right now, so we're simplifying the masking logic
+      const isMasked = !(isComplete || isAssignedToCurrentUser);
+      
+      // Get AHJ classification for color
+      const classification = project.ahj?.classification || 'unknown';
+      const badgeClass = getClassificationBadgeClass(classification);
+      
+      return (
+        <div 
+          key={project.id} 
+          className={`
+            flex-shrink-0 w-80 p-4 rounded-lg shadow-md m-2 cursor-pointer
+            ${selectedProject?.id === project.id ? 'bg-gray-800 border border-blue-500' : 'bg-gray-900'}
+            transition-all duration-200 hover:bg-gray-800
+          `}
+          onClick={() => handleProjectSelect(project)}
+        >
+          <div className="flex justify-between items-start mb-2">
+            <h3 className="text-lg font-semibold text-white truncate">
+              {isMasked ? 'Project details restricted' : (project.address || 'Unnamed Project')}
+            </h3>
+            <div className={`px-2 py-1 rounded text-xs font-medium ${badgeClass}`}>
+              {classification.toUpperCase()}
+            </div>
+          </div>
+          
+          <div className="text-sm text-gray-300 mb-1">
+            <span className="font-medium">Status:</span> {isMasked ? 'Restricted' : project.status || 'Unknown'}
+          </div>
+          
+          <div className="text-sm text-gray-300 mb-1">
+            <span className="font-medium">Address:</span> {isMasked ? 'Project details restricted' : project.address || 'No address'}
+          </div>
+          
+          {!isMasked && (
+            <>
+              <div className="text-sm text-gray-300 mb-1">
+                <span className="font-medium">AHJ:</span> {project.ahj?.name || 'Unknown'}
+              </div>
+              
+              <div className="text-sm text-gray-300 mb-1">
+                <span className="font-medium">Utility:</span> {project.utility?.name || 'Unknown'}
+              </div>
+              
+              <div className="text-sm text-gray-300">
+                <span className="font-medium">45-Day Qualified:</span> {isQualified(project) ? 'Yes' : 'No'}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    });
+  };
+
+  // Render the main component
+  return (
+    <div className="h-full w-full flex flex-col relative">
+      {/* Map container */}
+      <div 
+        ref={mapContainer} 
+        className="flex-grow w-full"
+        style={{ height: 'calc(100% - 120px)' }}
       />
       
-      {/* Map is shown even when no projects are available */}
-      
-      {/* Project cards at the bottom */}
-      {(sortedVisibleProjects.length > 0 || localSelectedProject) && (
-        <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none">
-          {/* Left scroll button */}
-          {showLeftArrow && (
-            <button
-              className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
-              onClick={scrollCardListLeft}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
-          
-          {/* Right scroll button */}
-          {showRightArrow && (
-            <button
-              className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-gray-800 rounded-full p-2 z-10 pointer-events-auto"
-              onClick={scrollCardListRight}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
-          
-          <div 
-            ref={cardListRef}
-            className="flex space-x-4 overflow-x-auto pb-2 snap-x pointer-events-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent"
-            onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUpOrLeave}
-            onMouseLeave={handleMouseUpOrLeave}
-            onMouseMove={handleMouseMove}
+      {/* Project cards carousel */}
+      <div className="h-32 w-full bg-gray-900 relative">
+        {/* Left scroll arrow */}
+        {showLeftArrow && (
+          <button
+            className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-gray-900 to-transparent z-10 px-2"
+            onClick={() => scrollCarousel('left')}
           >
-            {/* Selected Project Card */}
-            {localSelectedProject && (
-              <div 
-                className={`flex-shrink-0 w-96 bg-gray-800 rounded-lg shadow-lg overflow-hidden`}
-              >
-                <div className="p-4">
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-lg font-semibold">
-                      {localSelectedProject.isMasked 
-                        ? 'Project Details (Restricted)' 
-                        : localSelectedProject.ahj.name || 'Project Details'}
-                    </h3>
-                    <button 
-                      onClick={handleCloseProject}
-                      className="text-gray-400 hover:text-white pointer-events-auto"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <p className="text-gray-400">Address:</p>
-                      <p>{localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.address}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Status:</p>
-                      <p>{localSelectedProject.status}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">AHJ:</p>
-                      <p>
-                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.ahj.name}
-                        {localSelectedProject.ahj.classification && (
-                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.ahj.classification)}`}>
-                            {localSelectedProject.ahj.classification}
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Utility:</p>
-                      <p>
-                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.utility.name}
-                        {localSelectedProject.utility.classification && (
-                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.utility.classification)}`}>
-                            {localSelectedProject.utility.classification}
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Financier:</p>
-                      <p>
-                        {localSelectedProject.isMasked ? '[Restricted]' : localSelectedProject.financier.name}
-                        {localSelectedProject.financier.classification && (
-                          <span className={`ml-2 inline-block px-2 py-0.5 rounded text-xs font-medium ${getClassificationBadgeClass(localSelectedProject.financier.classification)}`}>
-                            {localSelectedProject.financier.classification}
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">45 Day Qualified:</p>
-                      <p>{mapQualificationStatus(localSelectedProject.qualifies45Day)}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {/* Project Cards */}
-            {sortedVisibleProjects.map(project => renderProjectCard(project))}
+            ←
+          </button>
+        )}
+        
+        {/* Cards container */}
+        <div
+          ref={cardListRef}
+          className="flex overflow-x-auto h-full py-2 px-4 hide-scrollbar"
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          {renderProjectCards()}
+        </div>
+        
+        {/* Right scroll arrow */}
+        {showRightArrow && (
+          <button
+            className="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-gray-900 to-transparent z-10 px-2"
+            onClick={() => scrollCarousel('right')}
+          >
+            →
+          </button>
+        )}
+      </div>
+      
+      {/* Loading indicator */}
+      {isLoading && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="text-white">Loading projects...</div>
+        </div>
+      )}
+      
+      {/* Error message */}
+      {error && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-red-900 text-white p-4 rounded-lg max-w-md">
+            <h3 className="text-lg font-bold mb-2">Error</h3>
+            <p>{error}</p>
           </div>
         </div>
       )}

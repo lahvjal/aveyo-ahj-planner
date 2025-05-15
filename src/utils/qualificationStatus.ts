@@ -32,14 +32,28 @@ export function mapQualificationStatus(status: string | boolean | null | undefin
 
 /**
  * Checks if a project qualifies for 45-day program based on its qualification status
+ * @param statusOrProject - Either a qualification status string/boolean or a Project object
  */
-export function isQualified(status: string | boolean | null | undefined): boolean {
-  return mapQualificationStatus(status) === 'Yes';
+export function isQualified(statusOrProject: string | boolean | null | undefined | any): boolean {
+  // If it's a Project object, extract the qualifies_45_day field
+  if (statusOrProject && typeof statusOrProject === 'object' && 'qualifies_45_day' in statusOrProject) {
+    return mapQualificationStatus(statusOrProject.qualifies_45_day) === 'Yes';
+  }
+  
+  // Otherwise, treat it as a direct status value
+  return mapQualificationStatus(statusOrProject) === 'Yes';
 }
 
 /**
  * Checks if a project's qualification status is pending
+ * @param statusOrProject - Either a qualification status string/boolean or a Project object
  */
-export function isPending(status: string | boolean | null | undefined): boolean {
-  return mapQualificationStatus(status) === 'Pending';
+export function isPending(statusOrProject: string | boolean | null | undefined | any): boolean {
+  // If it's a Project object, extract the qualifies_45_day field
+  if (statusOrProject && typeof statusOrProject === 'object' && 'qualifies_45_day' in statusOrProject) {
+    return mapQualificationStatus(statusOrProject.qualifies_45_day) === 'Pending';
+  }
+  
+  // Otherwise, treat it as a direct status value
+  return mapQualificationStatus(statusOrProject) === 'Pending';
 }

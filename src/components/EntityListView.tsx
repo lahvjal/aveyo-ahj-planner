@@ -1,32 +1,20 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { FiMapPin } from 'react-icons/fi';
 import { Project, ProjectFilter } from '@/utils/types';
-import { useEntities, EntityData } from '@/hooks/useEntities';
-import { useEntityRelationships } from '@/hooks/useEntityRelationships';
+import { useData } from '@/contexts/DataContext';
 import EntityListItem from './EntityListItem';
 import { formatDistance } from '@/utils/formatters';
 import { getClassificationBadgeClass } from '@/utils/classificationColors';
 import EmptyState from './EmptyState';
 
 interface EntityListViewProps {
-  projects: Project[];
-  userLocation?: { latitude: number; longitude: number } | null;
-  onViewOnMap: (entityName: string, entityType: 'ahj' | 'utility') => void;
-  onAddFilter: (filter: ProjectFilter) => void;
-  onRemoveFilter: (filter: ProjectFilter) => void; // Add prop for removing filters
-  filters?: ProjectFilter[]; // Add filters prop to receive active filters
+  onViewOnMap?: (entityId: string, entityType: 'ahj' | 'utility') => void;
 }
 
-const EntityListView: React.FC<EntityListViewProps> = ({
-  projects,
-  userLocation,
-  onViewOnMap,
-  onAddFilter,
-  onRemoveFilter,
-  filters = []
-}) => {
-  // We no longer need direct selection state variables as we're using filter panel exclusively
-  
+// Import the EntityData type from useEntities to ensure consistency
+import { EntityData } from '@/hooks/useEntities';
+
+const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode => {
   // State for loaded items count (for infinite scrolling)
   const [ahjLoadedCount, setAhjLoadedCount] = useState(20);
   const [utilityLoadedCount, setUtilityLoadedCount] = useState(20);
@@ -35,214 +23,309 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   const ahjScrollContainerRef = useRef<HTMLDivElement>(null);
   const utilityScrollContainerRef = useRef<HTMLDivElement>(null);
   
-  // Use the entities hook to fetch ALL AHJ and Utility data directly from Supabase
-  // We'll use this data as a base, but filter it based on the filtered projects
-  const { ahjs: allAhjs, utilities: allUtilities, isLoading, error, calculateDistances } = useEntities();
+  // Use DataContext for all data and filter state
+  const { 
+    projects,
+    ahjs: allAhjs, 
+    utilities: allUtilities,
+    filters,
+    isLoading,
+    error,
+    addFilter,
+    removeFilter,
+    userLocation // Get user location from DataContext
+  } = useData();
+  // console.log('ENTITY PAGE processed AHJs', allAhjs);
+  // console.log('ENTITY PAGE processed Utilities', allUtilities);
+  // Get project entity IDs for reference (used for debugging only)
+  const projectAhjIds = useMemo(() => 
+    new Set(projects.map(p => p.ahj?.id).filter(Boolean)), 
+    [projects]
+  );
   
-  // Create filtered lists of entities based on the filtered projects
-  // This ensures that panel filters affect which entities are shown
-  const projectAhjIds = useMemo(() => new Set(projects.map(p => p.ahj?.id).filter(Boolean)), [projects]);
-  const projectUtilityIds = useMemo(() => new Set(projects.map(p => p.utility?.id).filter(Boolean)), [projects]);
+  const projectUtilityIds = useMemo(() => 
+    new Set(projects.map(p => p.utility?.id).filter(Boolean)), 
+    [projects]
+  );
   
-  // Filter the entities to only include those that appear in the filtered projects
-  const ahjs = useMemo(() => allAhjs.filter(ahj => projectAhjIds.has(ahj.id)), [allAhjs, projectAhjIds]);
-  const utilities = useMemo(() => allUtilities.filter(utility => projectUtilityIds.has(utility.id)), [allUtilities, projectUtilityIds]);
+  // IMPORTANT: Use the already filtered entities from DataContext directly
+  // The DataContext already applies proper filtering based on:
+  // 1. Project filters (when no entity-specific filters exist)
+  // 2. Entity-specific filters (when they exist)
   
-  // Use the entity relationships hook to track connections between AHJs and Utilities
-  // We pass ALL projects to ensure we have complete relationship data
-  const { getRelatedUtilities, getRelatedAhjs } = useEntityRelationships(projects);
+  // Log filtering status for debugging
+  // console.log('EntityListView - Filter status:', 
+  //             'Project filters:', filters.projectFilters.length, 
+  //             'Entity filters:', filters.entityFilters.length);
+  // console.log('EntityListView - Entities from DataContext:', 
+  //             'AHJs:', allAhjs.length, 
+  //             'Utilities:', allUtilities.length);
   
-  // Helper functions to identify entities that match active filters
-  const getHighlightedAhjId = useMemo(() => {
-    // Look for entity-selection filters or manual filters of type 'ahj'
-    const ahjFilter = filters.find(f => f.type === 'ahj');
-    if (ahjFilter) {
-      // If it's an entity-selection filter, use the entityId
-      if (ahjFilter.filterSource === 'entity-selection' && ahjFilter.entityId) {
-        return ahjFilter.entityId;
-      }
-      // For manual filters, find the AHJ by name
-      const matchingAhj = ahjs.find(ahj => ahj.name === ahjFilter.value);
-      return matchingAhj?.id || null;
-    }
-    return null;
-  }, [filters, ahjs]);
-
-  const getHighlightedUtilityId = useMemo(() => {
-    // Look for entity-selection filters or manual filters of type 'utility'
-    const utilityFilter = filters.find(f => f.type === 'utility');
-    if (utilityFilter) {
-      // If it's an entity-selection filter, use the entityId
-      if (utilityFilter.filterSource === 'entity-selection' && utilityFilter.entityId) {
-        return utilityFilter.entityId;
-      }
-      // For manual filters, find the utility by name
-      const matchingUtility = utilities.find(utility => utility.name === utilityFilter.value);
-      return matchingUtility?.id || null;
-    }
-    return null;
-  }, [filters, utilities]);
+  // Debug filter structure
+  // if (filters.entityFilters.length > 0) {
+  //   console.log('FILTER DEBUG: Entity filters:', filters.entityFilters);
+  // }
   
-  // Log relationship status for debugging
+  // if (filters.projectFilters.length > 0) {
+  //   console.log('FILTER DEBUG: Project filters:', filters.projectFilters);
+  // }
+  
+  // Use the already filtered entities directly
+  const ahjs = allAhjs;
+  const utilities = allUtilities;
+  
+  // Log data received by EntityListView component
   useEffect(() => {
-    console.log(`[EntityListView] Using relationships from ${projects.length} projects`);
+    // console.log('===== ENTITYLISTVIEW COMPONENT DATA =====');
+    // console.log('Projects received:', projects.length);
+    // console.log('Processed AHJs received:', allAhjs.length);
+    // console.log('Processed Utilities received:', allUtilities.length);
+    // console.log('Is Loading:', isLoading);
+    // console.log('Error:', error);
+    // console.log('Filters:', filters);
     
-    // Log highlighted entities from filters
-    if (getHighlightedAhjId) {
-      const relatedUtilities = getRelatedUtilities(getHighlightedAhjId);
-      console.log(`[EntityListView] Highlighted AHJ ${getHighlightedAhjId} has ${relatedUtilities?.size || 0} related utilities`);
+    // Check if data is still loading
+    if (isLoading) {
+      // console.log('Data is still loading, waiting for data to be ready');
     }
-    if (getHighlightedUtilityId) {
-      const relatedAhjs = getRelatedAhjs(getHighlightedUtilityId);
-      console.log(`[EntityListView] Highlighted Utility ${getHighlightedUtilityId} has ${relatedAhjs?.size || 0} related AHJs`);
+    
+    // Debug entity data structure
+    if (allAhjs.length > 0) {
+      // console.log('Sample processed AHJ structure:', allAhjs[0]);
+    } else {
+      // console.log('No AHJs available at all');
     }
-  }, [projects, getRelatedUtilities, getRelatedAhjs, getHighlightedAhjId, getHighlightedUtilityId]);
-
-  // Update distances when user location changes
-  // Using a ref to track previous location to avoid unnecessary calculations
-  const prevLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
-  
-  useEffect(() => {
-    // Only calculate distances if the location has actually changed
-    if (userLocation) {
-      const locationChanged = !prevLocationRef.current || 
-        prevLocationRef.current.latitude !== userLocation.latitude || 
-        prevLocationRef.current.longitude !== userLocation.longitude;
-      
-      if (locationChanged) {
-        console.log('[EntityListView] Calculating distances with user location:', userLocation);
-        calculateDistances(userLocation);
-        prevLocationRef.current = userLocation;
-        
-        // Debug: Log AHJs with coordinates
-        console.log('[EntityListView] AHJs with coordinates:', 
-          ahjs.filter(a => a.latitude && a.longitude)
-            .map(a => ({ id: a.id, name: a.name, lat: a.latitude, lng: a.longitude, distance: a.distance }))
-        );
-      }
+    
+    if (allUtilities.length > 0) {
+      // console.log('Sample processed Utility structure:', allUtilities[0]);
+    } else {
+      //console.log('No Utilities available at all');
     }
-  }, [userLocation, calculateDistances, ahjs]);
+    
+    // Debug project entity references
+    if (projects.length > 0) {
+      //console.log('Sample Project AHJ reference:', projects[0].ahj);
+      //console.log('Sample Project Utility reference:', projects[0].utility);
+    }
+    
+    // Log the actual displayed entities (filtered entities)
+    //console.log('AHJs to be displayed:', ahjs.length);
+    //console.log('Utilities to be displayed:', utilities.length);
+    
+    //console.log('===== END ENTITYLISTVIEW COMPONENT DATA =====');
+  }, [projects, allAhjs, allUtilities, filters, isLoading, error, ahjs, utilities]);
   
-  // Filter utilities based on highlighted AHJ from filters
-  const filteredUtilities = useMemo(() => {
-    // Use highlighted AHJ from filters
-    const targetAhjId = getHighlightedAhjId;
-    
-    if (!targetAhjId) return utilities; // Show already filtered utilities if no AHJ is highlighted
-    
-    const relatedUtilityIds = getRelatedUtilities(targetAhjId);
-    if (!relatedUtilityIds || relatedUtilityIds.size === 0) return [];
-    
-    // Filter utilities by related IDs
-    return utilities.filter(utility => relatedUtilityIds.has(utility.id));
-  }, [utilities, getHighlightedAhjId, getRelatedUtilities]);
+  // Helper function to get related entities
+  const getRelatedUtilities = useCallback((ahjId: string) => {
+    return utilities.filter((utility: EntityData) => {
+      return projects.some(p => p.ahj?.id === ahjId && p.utility?.id === utility.id);
+    });
+  }, [utilities, projects]);
   
-  // Filter AHJs based on highlighted utility from filters
+  const getRelatedAhjs = useCallback((utilityId: string) => {
+    return ahjs.filter((ahj: EntityData) => {
+      return projects.some(p => p.utility?.id === utilityId && p.ahj?.id === ahj.id);
+    });
+  }, [ahjs, projects]);
+  
+  // Helper function to calculate distances between coordinates
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+    
+    // Haversine formula for distance calculation
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const d = R * c; // Distance in km
+    return d;
+  };
+  
+  // No need to calculate distances here anymore as it's handled in DataContext
+  // Just log that we're using pre-calculated distances
+  // useEffect(() => {
+  //   if (userLocation) {
+  //     console.log('EntityListView: Using pre-calculated distances from DataContext');
+  //   }
+  // }, [userLocation]);
+  
+  // Use the already filtered and sorted entities directly from DataContext
+  // No additional sorting needed as DataContext now handles all sorting logic
   const filteredAhjs = useMemo(() => {
-    // Use highlighted utility from filters
-    const targetUtilityId = getHighlightedUtilityId;
-    
-    if (!targetUtilityId) return ahjs; // Show already filtered AHJs if no utility is highlighted
-    
-    const relatedAhjIds = getRelatedAhjs(targetUtilityId);
-    if (!relatedAhjIds || relatedAhjIds.size === 0) return [];
-    
-    // Filter AHJs by related IDs
-    return ahjs.filter(ahj => relatedAhjIds.has(ahj.id));
-  }, [ahjs, getHighlightedUtilityId, getRelatedAhjs]);
+    return ahjs; // Already sorted by DataContext
+  }, [ahjs]);
   
-  // Visible items for both lists (with pagination)
-  const visibleAhjs = useMemo(() => {
-    return filteredAhjs.slice(0, ahjLoadedCount);
-  }, [filteredAhjs, ahjLoadedCount]);
+  const filteredUtilities = useMemo(() => {
+    return utilities; // Already sorted by DataContext
+  }, [utilities]);
   
-  const visibleUtilities = useMemo(() => {
-    return filteredUtilities.slice(0, utilityLoadedCount);
-  }, [filteredUtilities, utilityLoadedCount]);
+  // Limit displayed entities for infinite scrolling
+  const visibleAhjs = useMemo(() => 
+    filteredAhjs.slice(0, ahjLoadedCount),
+    [filteredAhjs, ahjLoadedCount]
+  );
   
-  // Handle entity selection - now only adds/removes filters in the panel
+  const visibleUtilities = useMemo(() => 
+    filteredUtilities.slice(0, utilityLoadedCount),
+    [filteredUtilities, utilityLoadedCount]
+  );
+  
+  // Determine which entities are highlighted based on filters
+  const highlightedAhjId = useMemo(() => {
+    const ahjFilter = filters.entityFilters.find(f => 
+      f.type === 'ahj' && f.filterSource === 'entity-selection'
+    );
+    return ahjFilter?.entityId || null;
+  }, [filters.entityFilters]);
+  
+  const highlightedUtilityId = useMemo(() => {
+    const utilityFilter = filters.entityFilters.find(f => 
+      f.type === 'utility' && f.filterSource === 'entity-selection'
+    );
+    return utilityFilter?.entityId || null;
+  }, [filters.entityFilters]);
+  
+  // Handle entity selection
   const handleAhjSelect = (ahj: EntityData) => {
-    // Check if this entity is already highlighted via a filter
-    const isAlreadyFiltered = getHighlightedAhjId === ahj.id;
+    console.log('ENTITY SELECTION DEBUG: Selecting AHJ', {
+      id: ahj.id,
+      name: ahj.name,
+      projectCount: ahj.projectCount,
+      relatedUtilityCount: ahj.relatedUtilityCount,
+      relatedUtilityIds: ahj.relatedUtilityIds
+    });
     
-    // We no longer manage direct selection state, only filter panel filters
+    // Check if this entity is already highlighted via a filter
+    const isAlreadyFiltered = highlightedAhjId === ahj.id;
+    console.log('ENTITY SELECTION DEBUG: Is already filtered?', isAlreadyFiltered, 'Highlighted ID:', highlightedAhjId);
+    
+    // Log current filter state before making changes
+    console.log('ENTITY SELECTION DEBUG: Current filters before change:', {
+      entityFilters: filters.entityFilters.map(f => ({
+        id: f.id,
+        type: f.type,
+        entityType: f.entityType,
+        entityId: f.entityId,
+        value: f.value,
+        filterSource: f.filterSource
+      })),
+      projectFilters: filters.projectFilters.length
+    });
+    
     if (isAlreadyFiltered) {
       // If already filtered, find and remove the filter
-      const existingFilter = filters.find(f => 
-        f.type === 'ahj' && 
-        f.filterSource === 'entity-selection' && 
-        f.entityId === ahj.id
+      const existingFilter = filters.entityFilters.find(f => 
+        (f.type === 'ahj' || f.entityType === 'ahj') && 
+        ((f.filterSource === 'entity-selection' && f.entityId === ahj.id) ||
+         (f.value === ahj.name))
       );
       
+      console.log('ENTITY SELECTION DEBUG: Found existing filter to remove:', existingFilter);
+      
       if (existingFilter) {
-        // Use onRemoveFilter to properly remove the filter
-        onRemoveFilter(existingFilter);
-        console.log(`[EntityListView] Deselected AHJ ${ahj.id}, removing filter`);
+        // Use removeFilter to properly remove the filter
+        removeFilter(existingFilter.id || '', true); // Always true for entity filters
+        console.log(`ENTITY SELECTION DEBUG: Deselected AHJ ${ahj.id}, removing filter ${existingFilter.id}`);
       }
     } else {
       // If selecting, add an entity-selection filter
-      onAddFilter({
-        type: 'ahj',
+      const newFilter: ProjectFilter = {
+        type: 'ahj', // This is a valid type according to ProjectFilter
         value: ahj.name,
+        label: `AHJ: ${ahj.name}`,
         filterSource: 'entity-selection',
         entityId: ahj.id,
+        entityType: 'ahj',
         metadata: {
           latitude: ahj.latitude,
           longitude: ahj.longitude,
           classification: ahj.classification
         }
-      });
-      console.log(`[EntityListView] Selected AHJ ${ahj.id}, added filter`);
+      };
+      
+      console.log('ENTITY SELECTION DEBUG: Adding new filter:', newFilter);
+      addFilter(newFilter);
+      console.log(`ENTITY SELECTION DEBUG: Selected AHJ ${ahj.id}, added filter`);
     }
   };
   
   const handleUtilitySelect = (utility: EntityData) => {
-    // Check if this entity is already highlighted via a filter
-    const isAlreadyFiltered = getHighlightedUtilityId === utility.id;
+    console.log('ENTITY SELECTION DEBUG: Selecting Utility', {
+      id: utility.id,
+      name: utility.name,
+      projectCount: utility.projectCount,
+      relatedAhjCount: utility.relatedAhjCount,
+      relatedAhjIds: utility.relatedAhjIds
+    });
     
-    // We no longer manage direct selection state, only filter panel filters
+    // Check if this entity is already highlighted via a filter
+    const isAlreadyFiltered = highlightedUtilityId === utility.id;
+    console.log('ENTITY SELECTION DEBUG: Is already filtered?', isAlreadyFiltered, 'Highlighted ID:', highlightedUtilityId);
+    
+    // Log current filter state before making changes
+    console.log('ENTITY SELECTION DEBUG: Current filters before change:', {
+      entityFilters: filters.entityFilters.map(f => ({
+        id: f.id,
+        type: f.type,
+        entityType: f.entityType,
+        entityId: f.entityId,
+        value: f.value,
+        filterSource: f.filterSource
+      })),
+      projectFilters: filters.projectFilters.length
+    });
+    
     if (isAlreadyFiltered) {
       // If already filtered, find and remove the filter
-      const existingFilter = filters.find(f => 
-        f.type === 'utility' && 
-        f.filterSource === 'entity-selection' && 
-        f.entityId === utility.id
+      const existingFilter = filters.entityFilters.find(f => 
+        (f.type === 'utility' || f.entityType === 'utility') && 
+        ((f.filterSource === 'entity-selection' && f.entityId === utility.id) ||
+         (f.value === utility.name))
       );
       
+      console.log('ENTITY SELECTION DEBUG: Found existing filter to remove:', existingFilter);
+      
       if (existingFilter) {
-        // Use onRemoveFilter to properly remove the filter
-        onRemoveFilter(existingFilter);
-        console.log(`[EntityListView] Deselected Utility ${utility.id}, removing filter`);
+        // Use removeFilter to properly remove the filter
+        removeFilter(existingFilter.id || '', true); // Always true for entity filters
+        console.log(`ENTITY SELECTION DEBUG: Deselected Utility ${utility.id}, removing filter ${existingFilter.id}`);
       }
     } else {
       // If selecting, add an entity-selection filter
-      onAddFilter({
-        type: 'utility',
+      const newFilter: ProjectFilter = {
+        type: 'utility', // This is a valid type according to ProjectFilter
         value: utility.name,
+        label: `Utility: ${utility.name}`,
         filterSource: 'entity-selection',
         entityId: utility.id,
+        entityType: 'utility',
         metadata: {
           latitude: utility.latitude,
           longitude: utility.longitude,
           classification: utility.classification
         }
-      });
-      console.log(`[EntityListView] Selected Utility ${utility.id}, added filter`);
+      };
+      
+      console.log('ENTITY SELECTION DEBUG: Adding new filter:', newFilter);
+      addFilter(newFilter);
+      console.log(`ENTITY SELECTION DEBUG: Selected Utility ${utility.id}, added filter`);
     }
   };
   
   // Handle scroll event for AHJ list
   useEffect(() => {
     const handleScroll = () => {
-      if (!ahjScrollContainerRef.current || isLoading) return;
+      if (!ahjScrollContainerRef.current) return;
       
       const { scrollTop, scrollHeight, clientHeight } = ahjScrollContainerRef.current;
       
-      // If scrolled near the bottom, load more items
-      if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (filteredAhjs.length > ahjLoadedCount) {
-          setAhjLoadedCount(prev => Math.min(prev + 10, filteredAhjs.length));
-        }
+      // Load more when scrolled to bottom (with a small buffer)
+      if (scrollHeight - scrollTop <= clientHeight + 100) {
+        setAhjLoadedCount(prev => prev + 10); // Load 10 more items
       }
     };
     
@@ -250,29 +333,22 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     if (container) {
       container.addEventListener('scroll', handleScroll);
       
-      // Initial check
-      setTimeout(handleScroll, 100);
-    }
-    
-    return () => {
-      if (container) {
+      return () => {
         container.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, [ahjLoadedCount, isLoading, filteredAhjs]);
+      };
+    }
+  }, []);
   
   // Handle scroll event for Utility list
   useEffect(() => {
     const handleScroll = () => {
-      if (!utilityScrollContainerRef.current || isLoading) return;
+      if (!utilityScrollContainerRef.current) return;
       
       const { scrollTop, scrollHeight, clientHeight } = utilityScrollContainerRef.current;
       
-      // If scrolled near the bottom, load more items
-      if (scrollHeight - scrollTop - clientHeight < 200) {
-        if (filteredUtilities.length > utilityLoadedCount) {
-          setUtilityLoadedCount(prev => Math.min(prev + 10, filteredUtilities.length));
-        }
+      // Load more when scrolled to bottom (with a small buffer)
+      if (scrollHeight - scrollTop <= clientHeight + 100) {
+        setUtilityLoadedCount(prev => prev + 10); // Load 10 more items
       }
     };
     
@@ -280,50 +356,41 @@ const EntityListView: React.FC<EntityListViewProps> = ({
     if (container) {
       container.addEventListener('scroll', handleScroll);
       
-      // Initial check
-      setTimeout(handleScroll, 100);
-    }
-    
-    return () => {
-      if (container) {
+      return () => {
         container.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, [utilityLoadedCount, isLoading, filteredUtilities]);
+      };
+    }
+  }, []);
   
-  // Set a fixed height style to ensure the table fills the available space
+  // Update table height based on container size
   useEffect(() => {
     const updateTableHeight = () => {
-      if (!ahjScrollContainerRef.current || !utilityScrollContainerRef.current) return;
+      const ahjContainer = ahjScrollContainerRef.current;
+      const utilityContainer = utilityScrollContainerRef.current;
       
-      // Get viewport height
-      const viewportHeight = window.innerHeight;
+      if (!ahjContainer || !utilityContainer) return;
       
-      // Get container's position from the top of the viewport
-      const ahjContainerRect = ahjScrollContainerRef.current.getBoundingClientRect();
-      const containerTop = ahjContainerRect.top;
+      // Get the parent container height
+      const parentHeight = ahjContainer.parentElement?.clientHeight || 0;
       
-      // Calculate available height (viewport height minus container top position minus footer space)
-      const bottomMargin = 40;
-      const availableHeight = viewportHeight - containerTop - bottomMargin;
-      
-      // Apply the height to both containers - ensure minimum height of 400px
-      const finalHeight = Math.max(400, availableHeight);
-      
-      ahjScrollContainerRef.current.style.height = `${finalHeight}px`;
-      ahjScrollContainerRef.current.style.overflowY = 'auto';
-      
-      utilityScrollContainerRef.current.style.height = `${finalHeight}px`;
-      utilityScrollContainerRef.current.style.overflowY = 'auto';
+      if (parentHeight > 0) {
+        // Calculate available height for tables
+        // Subtract header height and some padding
+        const availableHeight = parentHeight - 60; // 40px for header, 20px for padding
+        
+        // Set height on both containers
+        ahjContainer.style.height = `${availableHeight}px`;
+        utilityContainer.style.height = `${availableHeight}px`;
+      }
     };
     
     // Initial update with a delay to ensure DOM is fully rendered
     const initialTimer = setTimeout(updateTableHeight, 200);
     
     // Run a second time after a longer delay to handle any layout shifts
-    const secondTimer = setTimeout(updateTableHeight, 500);
+    const secondTimer = setTimeout(updateTableHeight, 1000);
     
-    // Update on resize
+    // Also update on window resize
     window.addEventListener('resize', updateTableHeight);
     
     return () => {
@@ -335,90 +402,63 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   
   // Render a single entity list (AHJ or Utility)
   const renderEntityList = (entityType: 'ahj' | 'utility') => {
-    const isAhj = entityType === 'ahj';
-    const entities = isAhj ? visibleAhjs : visibleUtilities;
-    // We no longer use direct selection, only highlighted entities from filters
-    const highlightedId = isAhj ? getHighlightedAhjId : getHighlightedUtilityId;
-    const handleSelect = isAhj ? handleAhjSelect : handleUtilitySelect;
-    const scrollRef = isAhj ? ahjScrollContainerRef : utilityScrollContainerRef;
-    const totalCount = isAhj ? filteredAhjs.length : filteredUtilities.length;
-    const loadedCount = isAhj ? ahjLoadedCount : utilityLoadedCount;
+    const entities = entityType === 'ahj' ? visibleAhjs : visibleUtilities;
+    const highlightedId = entityType === 'ahj' ? highlightedAhjId : highlightedUtilityId;
+    const handleSelect = entityType === 'ahj' ? handleAhjSelect : handleUtilitySelect;
+    const emptyTitle = entityType === 'ahj' ? 'No AHJs Found' : 'No Utilities Found';
+    const emptyMessage = 'Try adjusting your filters to see more results.';
+    
+    if (isLoading) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-gray-400">Loading...</div>
+        </div>
+      );
+    }
+    
+    if (error) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-red-500">Error loading data: {error}</div>
+        </div>
+      );
+    }
+    
+    if (entities.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-full p-4">
+          <EmptyState 
+            title={emptyTitle} 
+            message={emptyMessage}
+            icon={entityType === 'ahj' ? 'building' : 'bolt'}
+          />
+        </div>
+      );
+    }
     
     return (
-      <div className="h-full flex flex-col">
-        {/* Table header */}
-        <div className="bg-[#1e1e1e] sticky top-0 z-10">
-          <div className="grid-cols-5-new divide-x divide-[#333333]">
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-              {entityType.toUpperCase()}
-            </div>
-            <div className="px-6 py-3 text-center text-xs font-medium text-gray-300 uppercase tracking-wider">
-              NO. PROJ
-            </div>
-            <div className="px-6 py-3 text-center text-xs font-medium text-gray-300 uppercase tracking-wider">
-              CLASS
-            </div>
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-              DISTANCE
-            </div>
-            <div className="px-6 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider pr-6">
-              MAP
-            </div>
-          </div>
-        </div>
-        
-        {/* Table body - scrollable */}
-        <div 
-          className="overflow-y-auto bg-[#121212] scroll-smooth" 
-          ref={scrollRef}
-          style={{ minHeight: '400px', display: 'block' }}
-        >
-          {isLoading ? (
-            <div className="px-6 py-4 text-center text-gray-400">
-              Loading {entityType === 'ahj' ? 'AHJs' : 'utilities'}...
-            </div>
-          ) : error ? (
-            <div className="px-6 py-4 text-center text-red-400">
-              Error: {error}
-            </div>
-          ) : entities.length === 0 ? (
-            <div className="px-6 py-4 text-center text-gray-400">
-              {highlightedId ? 
-                `No ${entityType === 'ahj' ? 'AHJs' : 'utilities'} related to the highlighted ${entityType === 'ahj' ? 'utility' : 'AHJ'}.` :
-                `No ${entityType === 'ahj' ? 'AHJs' : 'utilities'} found.`
-              }
-              {/* Clear Selection button removed as we now use filter panel exclusively */}
-            </div>
-          ) : (
-            <div className="divide-y divide-[#333333]">
-              {entities.map((entity) => (
-                <EntityListItem
-                  key={entity.id}
-                  entity={entity}
-                  isSelected={false} // No longer using direct selection
-                  isHighlighted={entity.id === highlightedId}
-                  onSelect={handleSelect}
-                  onViewOnMap={onViewOnMap}
-                  entityType={entityType}
-                />
-              ))}
-              
-              {/* Loading indicator */}
-              {isLoading && (
-                <div className="py-4 text-center text-gray-400">
-                  Loading more...
-                </div>
-              )}
-              
-              {/* End of list indicator */}
-              {!isLoading && loadedCount >= totalCount && totalCount > 0 && (
-                <div className="py-4 text-center text-gray-500 text-sm">
-                  Showing all {totalCount} {entityType === 'ahj' ? 'AHJs' : 'utilities'}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+      <div className="grid grid-cols-1 gap-2 p-2">
+        {entities.map((entity: EntityData) => {
+          // Ensure entity has all required properties
+          const completeEntity: EntityData = {
+            ...entity,
+            // Make sure all required properties are set
+            projectCount: entity.projectCount ?? 0,
+            distance: entity.distance ?? Number.MAX_VALUE // Default distance if not provided
+          };
+          
+          return (
+            <EntityListItem
+              key={entity.id}
+              entity={completeEntity}
+              isSelected={entity.id === highlightedId}
+              onSelect={() => handleSelect(entity)}
+              onViewOnMap={onViewOnMap ? () => onViewOnMap(entity.id, entityType) : undefined}
+              entityType={entityType}
+            />
+          );
+        })}
+
       </div>
     );
   };
@@ -426,65 +466,40 @@ const EntityListView: React.FC<EntityListViewProps> = ({
   // Render the main component with side-by-side AHJ and Utility lists
   return (
     <div className="w-full h-full flex flex-col">
-      
-      {/* Side-by-side entity lists */}
-      <div className="grid grid-cols-2 gap-4 flex-1">
-        {/* AHJ List */}
-        <div className="flex-1 h-full">
-          <h2 className="text-xl font-bold text-white mb-4">AHJ</h2>
-          <div className="rounded-md border border-[#333333] w-100% h-100%">
-            {renderEntityList('ahj')}
+      {/* Header with tabs */}
+      <div className="flex bg-gray-800 border-b border-gray-700">
+        <div className="w-1/2 py-2 px-4 font-medium text-center border-r border-gray-700">
+          AHJs ({filteredAhjs.length})
+          <div className="text-xs text-gray-400">
+            Processed: {allAhjs.length} | Filtered: {ahjs.length}
           </div>
         </div>
-        
-        {/* Utility List */}
-        <div className="flex-1 h-full">
-          <h2 className="text-xl font-bold text-white mb-4">UTILITY</h2>
-          <div className="rounded-md border border-[#333333] w-100% h-100%">
-            {renderEntityList('utility')}
+        <div className="w-1/2 py-2 px-4 font-medium text-center">
+          Utilities ({filteredUtilities.length})
+          <div className="text-xs text-gray-400">
+            Processed: {allUtilities.length} | Filtered: {utilities.length}
           </div>
         </div>
       </div>
       
-      {/* Selection status and clear button - now based on filter panel filters */}
-      {(getHighlightedAhjId || getHighlightedUtilityId) && (
-        <div className="mt-4 p-2 bg-[#1e1e1e] rounded-md text-sm text-gray-300">
-          {getHighlightedAhjId && (
-            <p>Showing utilities that have projects with the highlighted AHJ</p>
-          )}
-          {getHighlightedUtilityId && (
-            <p>Showing AHJs that have projects with the highlighted utility</p>
-          )}
-          <div className="flex mt-2">
-            <button 
-              onClick={() => {
-                // Clear any highlighted entities by removing their filters
-                const ahjFilter = filters.find(f => f.type === 'ahj' && f.filterSource === 'entity-selection');
-                const utilityFilter = filters.find(f => f.type === 'utility' && f.filterSource === 'entity-selection');
-                
-                // If we have an AHJ filter and we can find the entity, remove it
-                if (ahjFilter && ahjFilter.entityId) {
-                  const highlightedEntity = ahjs.find(a => a.id === ahjFilter.entityId);
-                  if (highlightedEntity) {
-                    handleAhjSelect(highlightedEntity); // This will toggle/deselect
-                  }
-                }
-                
-                // If we have a utility filter and we can find the entity, remove it
-                if (utilityFilter && utilityFilter.entityId) {
-                  const highlightedEntity = utilities.find(u => u.id === utilityFilter.entityId);
-                  if (highlightedEntity) {
-                    handleUtilitySelect(highlightedEntity); // This will toggle/deselect
-                  }
-                }
-              }}
-              className="text-blue-400 hover:text-blue-300 text-xs"
-            >
-              Clear Selection
-            </button>
-          </div>
+      {/* Content area with two scrollable lists */}
+      <div className="flex flex-grow overflow-hidden">
+        {/* AHJ List */}
+        <div 
+          ref={ahjScrollContainerRef}
+          className="w-1/2 overflow-y-auto border-r border-gray-700"
+        >
+          {renderEntityList('ahj')}
         </div>
-      )}
+        
+        {/* Utility List */}
+        <div 
+          ref={utilityScrollContainerRef}
+          className="w-1/2 overflow-y-auto"
+        >
+          {renderEntityList('utility')}
+        </div>
+      </div>
     </div>
   );
 };

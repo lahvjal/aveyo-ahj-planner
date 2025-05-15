@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Project } from '@/utils/types';
 import { supabase } from '@/utils/supabaseClient';
 
@@ -134,16 +134,16 @@ export function useEntityRelationships(projects: Project[]) {
     };
   }, []); // Empty dependency array ensures this only runs once on mount
   
-  // Helper functions to get related entities
-  const getRelatedUtilities = (ahjId: string | null) => {
+  // Helper functions to get related entities - memoized to prevent recreation on every render
+  const getRelatedUtilities = useCallback((ahjId: string | null) => {
     if (!ahjId) return null;
     return ahjToUtilityMap.get(ahjId) || new Set();
-  };
+  }, [ahjToUtilityMap]);
   
-  const getRelatedAhjs = (utilityId: string | null) => {
+  const getRelatedAhjs = useCallback((utilityId: string | null) => {
     if (!utilityId) return null;
     return utilityToAhjMap.get(utilityId) || new Set();
-  };
+  }, [utilityToAhjMap]);
   
   // Debug function to log relationship counts
   useEffect(() => {

@@ -1,14 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/utils/supabaseClient';
+import { extractCoordinates, extractEntityName, extractClassification } from '@/utils/dataProcessing';
 
+// Define types for entity data
 export interface EntityData {
   id: string;
   name: string;
   classification: string;
   projectCount: number;
+  distance: number;
   latitude?: number;
   longitude?: number;
-  distance: number;
+  coordStatus?: string; // Status of coordinate extraction: 'empty', 'invalid', or undefined for valid coordinates
+  
+  // Relationship data
+  relatedUtilityCount?: number;
+  relatedAhjCount?: number;
+  relatedUtilityIds?: string[];
+  relatedAhjIds?: string[];
 }
 
 // Cache keys
@@ -21,10 +30,8 @@ function loadFromCache() {
     if (!cachedData) return null;
     
     const parsed = JSON.parse(cachedData);
-    console.log('[Entities] Found cached data from:', new Date(parsed.timestamp).toLocaleString());
     return parsed;
   } catch (error) {
-    console.error('[Entities] Error loading from cache:', error);
     return null;
   }
 }
@@ -38,437 +45,264 @@ function saveToCache(ahjs: EntityData[], utilities: EntityData[]) {
       timestamp: Date.now()
     };
     localStorage.setItem(ENTITY_CACHE_KEY, JSON.stringify(cacheData));
-    console.log('[Entities] Saved data to cache at:', new Date().toLocaleString());
   } catch (error) {
-    console.error('[Entities] Error saving to cache:', error);
+    // Silent fail for cache operations
   }
 }
 
-export function useEntities() {
-  const [utilities, setUtilities] = useState<EntityData[]>([]);
-  const [ahjs, setAhjs] = useState<EntityData[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState<number>(0);
-  // Add a ref to track if the component is mounted
-  const isMounted = useRef(true);
+// Define the type for external data passed from useProjects
+export interface ExternalEntityData {
+  ahjs?: any[];
+  utilities?: any[];
+}
 
-  // Add a ref to track the fetch request ID to handle race conditions
+// Define the return type for the useEntities hook
+export interface UseEntitiesResult {
+  ahjs: EntityData[];
+  utilities: EntityData[];
+  isLoading: boolean;
+  error: string | null;
+  calculateDistances: (userLocation: { latitude: number; longitude: number } | null) => void;
+}
+
+/**
+ * Custom hook to fetch and manage AHJ and Utility entities
+ * Can accept external data from useProjects to avoid redundant fetching
+ */
+export const useEntities = (externalData?: ExternalEntityData): UseEntitiesResult => {
+  // State for AHJs and Utilities
+  const [ahjs, setAhjs] = useState<EntityData[]>([]);
+  const [utilities, setUtilities] = useState<EntityData[]>([]);
+  
+  // Loading and error states
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [usingExternalData, setUsingExternalData] = useState<boolean>(false);
+  
+  // Refs for tracking component mount state and fetch operations
+  const isMounted = useRef<boolean>(true);
   const fetchIdRef = useRef(0);
 
-  // Function to retry data fetching
-  const retryFetch = useCallback(() => {
-    setRetryCount(prev => prev + 1);
-  }, []);
-
-  useEffect(() => {
-    // Set isMounted to true when component mounts
-    isMounted.current = true;
+  // Calculate distance between two points using Haversine formula
+  const calculateHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radius of the Earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c; // Distance in km
+    return distance;
+  };
+  
+  // Calculate distances between entities and user location
+  const calculateDistances = useCallback((userLocation: { latitude: number; longitude: number } | null) => {
+    if (!userLocation || !userLocation.latitude || !userLocation.longitude) return;
     
-    const fetchEntities = async () => {
-      // Only set state if component is still mounted
-      if (!isMounted.current) return;
+    // Calculate distances for AHJs
+    const updatedAhjs = ahjs.map(ahj => {
+      if (ahj.latitude && ahj.longitude) {
+        const distance = calculateHaversineDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          ahj.latitude,
+          ahj.longitude
+        );
+        return { ...ahj, distance };
+      }
+      return { ...ahj, distance: Number.MAX_VALUE }; // Set a very large distance for entities without coordinates
+    });
+    
+    // Calculate distances for utilities
+    const updatedUtilities = utilities.map(utility => {
+      if (utility.latitude && utility.longitude) {
+        const distance = calculateHaversineDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          utility.latitude,
+          utility.longitude
+        );
+        return { ...utility, distance };
+      }
+      return { ...utility, distance: Number.MAX_VALUE }; // Set a very large distance for entities without coordinates
+    });
+    
+    setAhjs(updatedAhjs);
+    setUtilities(updatedUtilities);
+  }, [ahjs, utilities]);
+
+  // Function to process external entity data from useProjects
+  const processExternalData = useCallback((data: ExternalEntityData) => {
+    if (!data) return;
+    
+    setIsLoading(true);
+    setUsingExternalData(true);
+    
+    try {
+      // Create maps to deduplicate entities
+      const ahjMap = new Map<string, EntityData>();
+      const utilityMap = new Map<string, EntityData>();
       
-      // Reset state
-      setIsLoading(true);
-      setError(null);
-      
-      // Generate a new fetch ID for this request
-      const currentFetchId = ++fetchIdRef.current;
-      
-      // Set up a single consistent timeout to prevent infinite loading
-      const FETCH_TIMEOUT = 20000; // 20 second timeout
-      
-      const timeoutId = setTimeout(() => {
-        if (isMounted.current && fetchIdRef.current === currentFetchId) {
-          console.error('Entity data fetch timeout');
-          setError('Timeout while fetching entity data. Please try again.');
-          setIsLoading(false);
-        }
-      }, FETCH_TIMEOUT);
-      
-      try {
-        // Create timeout promise with the same timeout duration
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(new Error('Entity data fetch timed out'));
-          }, FETCH_TIMEOUT);
+      // Process AHJs
+      if (data.ahjs && data.ahjs.length > 0) {
+        // Process each AHJ and add to map with ID as key
+        data.ahjs.forEach(ahj => {
+          const id = ahj.ahj_item_id || ahj.id;
+          if (!id) return; // Skip entities without IDs
+          
+          if (!ahjMap.has(id)) {
+            ahjMap.set(id, {
+              id,
+              name: extractEntityName(ahj.name || ahj.ahj_name || '', 'ahj'),
+              classification: extractClassification(ahj.classification || ''),
+              projectCount: 0, // Will be calculated later if needed
+              distance: 0,
+              ...extractCoordinates(ahj.coordinates || ahj.raw_payload)
+            });
+          }
         });
+      }
+      
+      // Process Utilities
+      if (data.utilities && data.utilities.length > 0) {
+        // Process each utility and add to map with ID as key
+        data.utilities.forEach(utility => {
+          const id = utility.utility_company_item_id || utility.id;
+          if (!id) return; // Skip entities without IDs
+          
+          if (!utilityMap.has(id)) {
+            utilityMap.set(id, {
+              id,
+              name: extractEntityName(utility.name || utility.utility_name || '', 'utility'),
+              classification: extractClassification(utility.classification || ''),
+              projectCount: 0, // Will be calculated later if needed
+              distance: 0,
+              ...extractCoordinates(utility.coordinates || utility.raw_payload)
+            });
+          }
+        });
+      }
+      
+      // Convert maps to arrays
+      const processedAhjs = Array.from(ahjMap.values());
+      const processedUtilities = Array.from(utilityMap.values());
+      
+      // Update state with processed data
+      setAhjs(processedAhjs);
+      setUtilities(processedUtilities);
+      
+      // Save processed data to cache
+      if (processedAhjs.length > 0 || processedUtilities.length > 0) {
+        saveToCache(processedAhjs, processedUtilities);
+      }
+    } catch (err) {
+      setError('Error processing entity data');
+      console.error('Error in processExternalData:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // Function to fetch entities from Supabase
+  const fetchEntities = useCallback(async () => {
+    // Increment fetch ID to track the latest fetch operation
+    const fetchId = ++fetchIdRef.current;
+    
+    // Set loading state
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Check if we have cached data
+      const cachedData = loadFromCache();
+      if (cachedData) {
+        // Use cached data if available and not too old (24 hours)
+        const cacheAge = Date.now() - cachedData.timestamp;
+        const cacheExpiry = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
         
-        // Try to load from cache first
-        const cachedData = loadFromCache();
-        if (cachedData && cachedData.timestamp > Date.now() - 5 * 60 * 1000) { // 5 minute cache
-          console.log('[Entities] Using cached data while fetching fresh data');
-          if (isMounted.current && fetchIdRef.current === currentFetchId) {
+        if (cacheAge < cacheExpiry) {
+          // Ensure this is still the latest fetch operation
+          if (isMounted.current && fetchId === fetchIdRef.current) {
             setAhjs(cachedData.ahjs || []);
             setUtilities(cachedData.utilities || []);
+            setError(null);
             setIsLoading(false);
+            return;
           }
-          // Continue fetching in the background
         }
-        
-        // Fetch AHJs with a timeout promise
-        const ahjPromise = supabase.from('ahj').select('*');
-        
-        // Fetch Utilities with a timeout promise
-        const utilityPromise = supabase.from('utility').select('*');
-        
-        // Wait for both requests to complete with timeout
-        const results = await Promise.all([
-          Promise.race([ahjPromise, timeoutPromise]) as Promise<any>,
-          Promise.race([utilityPromise, timeoutPromise]) as Promise<any>
-        ]);
-        
-        const ahjResult = results[0];
-        const utilityResult = results[1];
-        
-        // Check if this is still the latest request
-        if (!isMounted.current || fetchIdRef.current !== currentFetchId) {
-          clearTimeout(timeoutId);
+      }
+      
+      // Fetch AHJs and Utilities from Supabase
+      const [ahjResult, utilityResult] = await Promise.all([
+        supabase.from('ahj').select('*'),
+        supabase.from('utility').select('*')
+      ]);
+      
+      // Check if this is still the latest fetch operation
+      if (isMounted.current && fetchId === fetchIdRef.current) {
+        if (ahjResult.error) {
+          setError('Error fetching AHJ data: ' + ahjResult.error.message);
+          setIsLoading(false);
           return;
         }
         
-        // Check for errors and provide fallbacks
-        if (ahjResult.error) {
-          console.error(`Error fetching AHJs: ${ahjResult.error.message}`);
-          // Don't throw error, continue with empty data
-        }
-        
         if (utilityResult.error) {
-          console.error(`Error fetching Utilities: ${utilityResult.error.message}`);
-          // Don't throw error, continue with empty data
-        }
-        
-        // Extract data with fallbacks
-        const ahjData = ahjResult.data || [];
-        const utilityData = utilityResult.data || [];
-        
-        // Log data counts
-        console.log(`[Entities] Fetched ${ahjData.length} AHJs and ${utilityData.length} Utilities`);
-        
-        // Count projects for each AHJ and Utility manually since we can't use group in static export mode
-        // Get all projects with AHJ and utility IDs
-        let projectData: any[] = [];
-        try {
-          // Create a new timeout promise for project data
-          const projectTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => {
-              reject(new Error('Project data fetch timed out'));
-            }, 10000); // 10 second timeout
-          });
-          
-          // Wrap in try-catch to prevent any errors from stopping the process
-          const projectPromise = supabase.from('podio_data').select('ahj_item_id, utility_company_item_id');
-          const projectResult = await Promise.race([projectPromise, projectTimeoutPromise]) as any;
-          
-          if (projectResult.error) {
-            console.error('Error fetching project data for counts:', projectResult.error);
-          } else {
-            projectData = projectResult.data || [];
-            console.log(`[Entities] Fetched relationship data for ${projectData.length} projects`);
-          }
-        } catch (err) {
-          console.error('Exception fetching project data for counts:', err);
-          // Continue with empty project data
-        }
-        
-        // Count projects for each AHJ and Utility
-        const ahjCountMap = new Map();
-        const utilityCountMap = new Map();
-        
-        (projectData || []).forEach((project: any) => {
-          // Count AHJ projects
-          if (project.ahj_item_id) {
-            const count = ahjCountMap.get(project.ahj_item_id) || 0;
-            ahjCountMap.set(project.ahj_item_id, count + 1);
-          }
-          
-          // Count Utility projects
-          if (project.utility_company_item_id) {
-            const count = utilityCountMap.get(project.utility_company_item_id) || 0;
-            utilityCountMap.set(project.utility_company_item_id, count + 1);
-          }
-        });
-        
-        // Log summary of entities being processed
-        console.log(`[COORDINATES] Processing ${ahjData?.length || 0} AHJs and ${utilityData?.length || 0} Utilities`);
-        
-        // Process AHJ data with better error handling
-        const processedAhjs = (ahjData || []).map((ahj: any) => {
-          try {
-            // Extract coordinates from raw_payload
-            let latitude: number | undefined;
-            let longitude: number | undefined;
-            
-            // Use safe property access with fallbacks
-            const ahjId = ahj?.ahj_item_id || ahj?.id || 'unknown';
-            console.log(`[COORDINATES] Processing AHJ ID: ${ahjId}`);
-            
-            try {
-              if (ahj?.raw_payload) {
-                console.log(`[COORDINATES] AHJ has raw_payload, type: ${typeof ahj.raw_payload}`);
-                let rawPayload = ahj.raw_payload;
-                
-                // Handle nested raw_payload structure
-                if (typeof rawPayload === 'object' && rawPayload?.raw_payload) {
-                  console.log('[COORDINATES] Found nested raw_payload structure');
-                  rawPayload = rawPayload.raw_payload;
-                }
-                
-                // Parse string JSON if needed
-                if (typeof rawPayload === 'string') {
-                  console.log('[COORDINATES] raw_payload is a string, attempting to parse as JSON');
-                  try {
-                    rawPayload = JSON.parse(rawPayload);
-                    console.log('[COORDINATES] Successfully parsed raw_payload JSON string');
-                  } catch (e) {
-                    console.error('[COORDINATES] Failed to parse AHJ raw_payload JSON string:', e);
-                  }
-                }
-                
-                // Extract coordinates
-                if (typeof rawPayload === 'object' && rawPayload !== null) {
-                  console.log('[COORDINATES] raw_payload keys:', Object.keys(rawPayload || {}));
-                  
-                  // Try different possible paths for coordinates
-                  if (rawPayload?.latitude !== undefined) {
-                    latitude = parseFloat(String(rawPayload.latitude));
-                    console.log(`[COORDINATES] Found latitude: ${latitude}`);
-                  } else if (rawPayload?.Latitude !== undefined) {
-                    latitude = parseFloat(String(rawPayload.Latitude));
-                    console.log(`[COORDINATES] Found Latitude (capital): ${latitude}`);
-                  } else if (rawPayload?.lat !== undefined) {
-                    latitude = parseFloat(String(rawPayload.lat));
-                    console.log(`[COORDINATES] Found lat: ${latitude}`);
-                  } else {
-                    console.log('[COORDINATES] No latitude found in raw_payload');
-                  }
-                  
-                  if (rawPayload?.longitude !== undefined) {
-                    longitude = parseFloat(String(rawPayload.longitude));
-                    console.log(`[COORDINATES] Found longitude: ${longitude}`);
-                  } else if (rawPayload?.Longitude !== undefined) {
-                    longitude = parseFloat(String(rawPayload.Longitude));
-                    console.log(`[COORDINATES] Found Longitude (capital): ${longitude}`);
-                  } else if (rawPayload?.lng !== undefined) {
-                    longitude = parseFloat(String(rawPayload.lng));
-                    console.log(`[COORDINATES] Found lng: ${longitude}`);
-                  } else {
-                    console.log('[COORDINATES] No longitude found in raw_payload');
-                  }
-                } else {
-                  console.log(`[COORDINATES] raw_payload is not an object, type: ${typeof rawPayload}`);
-                }
-              } else {
-                console.log('[COORDINATES] AHJ has no raw_payload');
-              }
-            } catch (error) {
-              console.error('[COORDINATES] Error extracting coordinates from AHJ raw_payload:', error);
-            }
-            
-            // Get AHJ name from raw_payload
-            let name = 'Unknown AHJ';
-            try {
-              name = ahj?.name || ahj?.raw_payload?.raw_payload?.name || 'Unknown AHJ';
-            } catch (e) {
-              console.error('[COORDINATES] Error extracting AHJ name:', e);
-            }
-            
-            // Validate coordinates
-            if (latitude !== undefined && longitude !== undefined) {
-              if (isNaN(latitude) || isNaN(longitude) || 
-                  latitude < -90 || latitude > 90 || 
-                  longitude < -180 || longitude > 180) {
-                latitude = undefined;
-                longitude = undefined;
-              }
-            }
-            
-            return {
-              id: ahjId,
-              name,
-              classification: ahj?.classification || ahj?.['eligible-for-classification'] || 'Unknown',
-              projectCount: ahjCountMap.get(ahjId) || 0,
-              latitude,
-              longitude,
-              distance: Number.MAX_VALUE
-            };
-          } catch (error) {
-            console.error('[COORDINATES] Critical error processing AHJ:', error);
-            // Return a fallback entity to prevent the map from breaking
-            return {
-              id: `error-${Math.random().toString(36).substring(2, 9)}`,
-              name: 'Error processing AHJ',
-              classification: 'Unknown',
-              projectCount: 0,
-              distance: Number.MAX_VALUE
-            };
-          }
-        });
-        
-        // Process Utility data with better error handling
-        const processedUtilities = (utilityData || []).map((utility: any) => {
-          try {
-            // Extract coordinates from raw_payload
-            let latitude: number | undefined;
-            let longitude: number | undefined;
-            
-            // Use safe property access with fallbacks
-            const utilityId = utility?.utility_company_item_id || utility?.id || 'unknown';
-            const utilityName = utility?.company_name || 'Unknown';
-            console.log(`[COORDINATES] Processing Utility ID: ${utilityId}, Name: ${utilityName}`);
-            
-            try {
-              if (utility?.raw_payload) {
-                console.log(`[COORDINATES] Utility has raw_payload, type: ${typeof utility.raw_payload}`);
-                let rawPayload = utility.raw_payload;
-                
-                // Handle nested raw_payload structure
-                if (typeof rawPayload === 'object' && rawPayload?.raw_payload) {
-                  console.log('[COORDINATES] Found nested raw_payload structure in Utility');
-                  rawPayload = rawPayload.raw_payload;
-                }
-                
-                // Parse string JSON if needed
-                if (typeof rawPayload === 'string') {
-                  console.log('[COORDINATES] Utility raw_payload is a string, attempting to parse as JSON');
-                  try {
-                    rawPayload = JSON.parse(rawPayload);
-                    console.log('[COORDINATES] Successfully parsed Utility raw_payload JSON string');
-                  } catch (e) {
-                    console.error('[COORDINATES] Failed to parse Utility raw_payload JSON string:', e);
-                  }
-                }
-                
-                // Extract coordinates
-                if (typeof rawPayload === 'object' && rawPayload !== null) {
-                  console.log('[COORDINATES] Utility raw_payload keys:', Object.keys(rawPayload || {}));
-                  
-                  // Try different possible paths for coordinates
-                  if (rawPayload?.latitude !== undefined) {
-                    latitude = parseFloat(String(rawPayload.latitude));
-                    console.log(`[COORDINATES] Found Utility latitude: ${latitude}`);
-                  } else if (rawPayload?.Latitude !== undefined) {
-                    latitude = parseFloat(String(rawPayload.Latitude));
-                    console.log(`[COORDINATES] Found Utility Latitude (capital): ${latitude}`);
-                  } else if (rawPayload?.lat !== undefined) {
-                    latitude = parseFloat(String(rawPayload.lat));
-                    console.log(`[COORDINATES] Found Utility lat: ${latitude}`);
-                  } else {
-                    console.log('[COORDINATES] No latitude found in Utility raw_payload');
-                  }
-                  
-                  if (rawPayload?.longitude !== undefined) {
-                    longitude = parseFloat(String(rawPayload.longitude));
-                    console.log(`[COORDINATES] Found Utility longitude: ${longitude}`);
-                  } else if (rawPayload?.Longitude !== undefined) {
-                    longitude = parseFloat(String(rawPayload.Longitude));
-                    console.log(`[COORDINATES] Found Utility Longitude (capital): ${longitude}`);
-                  } else if (rawPayload?.lng !== undefined) {
-                    longitude = parseFloat(String(rawPayload.lng));
-                    console.log(`[COORDINATES] Found Utility lng: ${longitude}`);
-                  } else {
-                    console.log('[COORDINATES] No longitude found in Utility raw_payload');
-                  }
-                } else {
-                  console.log(`[COORDINATES] Utility raw_payload is not an object, type: ${typeof rawPayload}`);
-                }
-              } else {
-                console.log('[COORDINATES] Utility has no raw_payload');
-              }
-            } catch (error) {
-              console.error('[COORDINATES] Error extracting coordinates from Utility raw_payload:', error);
-            }
-            
-            // Get Utility name with safe access
-            const name = utility?.company_name || 'Unknown Utility';
-            
-            // Validate coordinates
-            if (latitude !== undefined && longitude !== undefined) {
-              if (isNaN(latitude) || isNaN(longitude) || 
-                  latitude < -90 || latitude > 90 || 
-                  longitude < -180 || longitude > 180) {
-                latitude = undefined;
-                longitude = undefined;
-              }
-            }
-            
-            return {
-              id: utilityId,
-              name,
-              classification: utility?.classification || utility?.['eligible-for-classification'] || 'Unknown',
-              projectCount: utilityCountMap.get(utilityId) || 0,
-              latitude,
-              longitude,
-              distance: Number.MAX_VALUE
-            };
-          } catch (error) {
-            console.error('[COORDINATES] Critical error processing Utility:', error);
-            // Return a fallback entity to prevent the map from breaking
-            return {
-              id: `error-utility-${Math.random().toString(36).substring(2, 9)}`,
-              name: 'Error processing Utility',
-              classification: 'Unknown',
-              projectCount: 0,
-              distance: Number.MAX_VALUE
-            };
-          }
-        });
-        
-        // Only update state if component is still mounted and this is still the latest request
-        if (isMounted.current && fetchIdRef.current === currentFetchId) {
-          setAhjs(processedAhjs);
-          setUtilities(processedUtilities);
+          setError('Error fetching Utility data: ' + utilityResult.error.message);
           setIsLoading(false);
-          
-          // Save successful results to cache
-          saveToCache(processedAhjs, processedUtilities);
+          return;
         }
         
-        // Clear the timeout since we completed successfully
-        clearTimeout(timeoutId);
-      } catch (error: any) {
-        console.error('Error in useEntities hook:', error);
+        // Process AHJs
+        const processedAhjs = (ahjResult.data || []).map(ahj => ({
+          id: ahj.id,
+          name: extractEntityName(ahj.name || '', 'ahj'),
+          classification: extractClassification(ahj.classification || ''),
+          projectCount: 0, // Will be calculated later if needed
+          distance: 0,
+          ...extractCoordinates(ahj.coordinates || ahj.raw_payload)
+        }));
         
-        // Only update state if component is still mounted and this is still the latest request
-        if (isMounted.current && fetchIdRef.current === currentFetchId) {
-          // Check if this is a network error or timeout that should trigger a retry
-          const isNetworkError = error.message?.includes('network') || 
-                               error.message?.includes('timeout') || 
-                               error.message?.includes('fetch');
-          
-          if (isNetworkError && retryCount < 3) {
-            console.log(`[Entities] Network error detected, scheduling retry #${retryCount + 1}`);
-            // Schedule a retry with exponential backoff
-            const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 8000);
-            setTimeout(() => {
-              if (isMounted.current) {
-                console.log(`[Entities] Executing retry #${retryCount + 1}`);
-                setRetryCount(prev => prev + 1);
-              }
-            }, retryDelay);
-          } else {
-            // Use cached data as fallback if available
-            const cachedData = loadFromCache();
-            if (cachedData && cachedData.ahjs?.length > 0) {
-              console.log('[Entities] Using cached data as fallback after error');
-              setAhjs(cachedData.ahjs);
-              setUtilities(cachedData.utilities || []);
-              setError('Using cached data. Latest data could not be loaded.');
-            } else {
-              setError(error.message || 'Failed to load entity data');
-            }
-            setIsLoading(false);
-          }
-        }
+        // Process Utilities
+        const processedUtilities = (utilityResult.data || []).map(utility => ({
+          id: utility.id,
+          name: extractEntityName(utility.name || '', 'utility'),
+          classification: extractClassification(utility.classification || ''),
+          projectCount: 0, // Will be calculated later if needed
+          distance: 0,
+          ...extractCoordinates(utility.coordinates || utility.raw_payload)
+        }));
         
-        // Clear the timeout since we handled the error
-        clearTimeout(timeoutId);
+        // Update state with processed data
+        setAhjs(processedAhjs);
+        setUtilities(processedUtilities);
+        setIsLoading(false);
+        
+        // Save processed data to cache
+        saveToCache(processedAhjs, processedUtilities);
       }
-    };
+    } catch (err) {
+      // Only update state if this is still the latest fetch operation
+      if (isMounted.current && fetchId === fetchIdRef.current) {
+        console.error('Error fetching entities:', err);
+        setError('Error fetching entity data');
+        setIsLoading(false);
+      }
+    }
+  }, []);
+  
+  // Effect to fetch data or process external data
+  useEffect(() => {
+    // Check if we have external data from useProjects
+    if (externalData) {
+      // Process external data
+      processExternalData(externalData);
+      return; // Skip fetching if we have external data
+    }
     
-    // Start the fetch process
-    const fetchPromise = fetchEntities();
+    // Start the fetch process if no external data
+    fetchEntities();
     
     // Cleanup function to prevent state updates after unmount
     return () => {
@@ -476,226 +310,14 @@ export function useEntities() {
       // Reset fetch ID to cancel any in-progress operations
       fetchIdRef.current = 0;
     };
-  }, []);
+  }, [externalData, processExternalData, fetchEntities]);
   
-  /**
-   * Calculate distances for entities based on user location
-   * Memoized to prevent unnecessary recalculations
-   */
-  const calculateDistances = useCallback((userLocation: { latitude: number; longitude: number } | null) => {
-    // Create a calculation ID to track this specific calculation request
-    const calculationId = ++fetchIdRef.current;
-    
-    console.log('[DISTANCE] Starting distance calculations with user location:', userLocation);
-    if (!userLocation) {
-      console.log('[DISTANCE] No user location provided, skipping distance calculations');
-      return;
-    }
-    
-    // If component is not mounted, don't proceed
-    if (!isMounted.current) {
-      return;
-    }
-    
-    // Performance metrics
-    const startTime = performance.now();
-    
-    // Create spatial indices for AHJs and Utilities
-    const ahjIndex = createSpatialIndex(ahjs);
-    const utilityIndex = createSpatialIndex(utilities);
-    
-    // Get user's grid cell
-    const gridSize = 1; // Must match the value in createSpatialIndex
-    const userCellX = Math.floor(userLocation.longitude / gridSize);
-    const userCellY = Math.floor(userLocation.latitude / gridSize);
-    
-    // Determine nearby cells (current cell and 8 surrounding cells)
-    const nearbyCells: string[] = [];
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        nearbyCells.push(`${userCellX + dx}:${userCellY + dy}`);
-      }
-    }
-    
-    console.log(`[DISTANCE] User location is in cell ${userCellX}:${userCellY}, checking ${nearbyCells.length} nearby cells`);
-    
-    // Process AHJs with spatial indexing
-    let ahjsWithCoords = 0;
-    let ahjsInNearbyCells = 0;
-    const updatedAhjs = ahjs.map(ahj => {
-      if (ahj.latitude && ahj.longitude) {
-        ahjsWithCoords++;
-        
-        // Calculate the entity's cell
-        const cellX = Math.floor(ahj.longitude / gridSize);
-        const cellY = Math.floor(ahj.latitude / gridSize);
-        const cellKey = `${cellX}:${cellY}`;
-        
-        // Check if the entity is in a nearby cell
-        const isNearby = nearbyCells.includes(cellKey);
-        
-        // For nearby entities, calculate exact distance
-        // For distant entities, use an approximate distance based on cell centers
-        let distance;
-        if (isNearby) {
-          ahjsInNearbyCells++;
-          distance = calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            ahj.latitude,
-            ahj.longitude
-          );
-          // Only log a few entities to reduce console spam
-          if (ahjsInNearbyCells <= 3) {
-            console.log(`[DISTANCE] Nearby AHJ "${ahj.name}" (${ahj.id}): ${distance.toFixed(2)} miles`);
-          }
-        } else {
-          // Approximate distance based on cell centers
-          // This is less accurate but much faster for distant entities
-          const approxDistance = calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            (cellY + 0.5) * gridSize, // Center of cell
-            (cellX + 0.5) * gridSize  // Center of cell
-          );
-          distance = approxDistance;
-        }
-        
-        return { ...ahj, distance };
-      }
-      return ahj;
-    });
-    
-    // Process Utilities with spatial indexing
-    let utilitiesWithCoords = 0;
-    let utilitiesInNearbyCells = 0;
-    const updatedUtilities = utilities.map(utility => {
-      if (utility.latitude && utility.longitude) {
-        utilitiesWithCoords++;
-        
-        // Calculate the entity's cell
-        const cellX = Math.floor(utility.longitude / gridSize);
-        const cellY = Math.floor(utility.latitude / gridSize);
-        const cellKey = `${cellX}:${cellY}`;
-        
-        // Check if the entity is in a nearby cell
-        const isNearby = nearbyCells.includes(cellKey);
-        
-        // For nearby entities, calculate exact distance
-        // For distant entities, use an approximate distance based on cell centers
-        let distance;
-        if (isNearby) {
-          utilitiesInNearbyCells++;
-          distance = calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            utility.latitude,
-            utility.longitude
-          );
-          // Only log a few entities to reduce console spam
-          if (utilitiesInNearbyCells <= 3) {
-            console.log(`[DISTANCE] Nearby Utility "${utility.name}" (${utility.id}): ${distance.toFixed(2)} miles`);
-          }
-        } else {
-          // Approximate distance based on cell centers
-          const approxDistance = calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            (cellY + 0.5) * gridSize, // Center of cell
-            (cellX + 0.5) * gridSize  // Center of cell
-          );
-          distance = approxDistance;
-        }
-        
-        return { ...utility, distance };
-      }
-      return utility;
-    });
-    
-    // Sort by distance
-    const sortedAhjs = [...updatedAhjs].sort((a, b) => a.distance - b.distance);
-    const sortedUtilities = [...updatedUtilities].sort((a, b) => a.distance - b.distance);
-    
-    // Performance metrics
-    const endTime = performance.now();
-    console.log(`[DISTANCE] Calculation completed in ${(endTime - startTime).toFixed(2)}ms`);
-    console.log(`[DISTANCE] Processed ${ahjsInNearbyCells}/${ahjsWithCoords} nearby AHJs and ${utilitiesInNearbyCells}/${utilitiesWithCoords} nearby Utilities with exact distances`);
-    
-    console.log(`[DISTANCE] Completed calculations: ${ahjsWithCoords}/${ahjs.length} AHJs and ${utilitiesWithCoords}/${utilities.length} Utilities have coordinates`);
-    
-    // Only update state if component is still mounted, this is the latest calculation,
-    // and if the distances have actually changed
-    if (isMounted.current && fetchIdRef.current === calculationId) {
-      // Use functional updates to avoid dependency issues
-      setAhjs(prev => {
-        // Only update if the distances have changed
-        const hasChanged = sortedAhjs.some((ahj, i) => 
-          i >= prev.length || ahj.distance !== prev[i].distance
-        );
-        return hasChanged ? sortedAhjs : prev;
-      });
-      
-      setUtilities(prev => {
-        // Only update if the distances have changed
-        const hasChanged = sortedUtilities.some((utility, i) => 
-          i >= prev.length || utility.distance !== prev[i].distance
-        );
-        return hasChanged ? sortedUtilities : prev;
-      });
-      
-      console.log('[DISTANCE] Distance calculations applied successfully');
-    } else {
-      console.log('[DISTANCE] Skipping state update - newer calculation in progress or component unmounted');
-    }
-  }, [ahjs, utilities]);
-  
-  /**
-   * Calculate distance between two points using Haversine formula
-   */
-  function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 3958.8; // Earth's radius in miles
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }
-  
-  /**
-   * Create a grid-based spatial index for more efficient distance calculations
-   * This divides the US into grid cells and only calculates exact distances for entities in nearby cells
-   */
-  function createSpatialIndex(entities: EntityData[]): Map<string, EntityData[]> {
-    const gridSize = 1; // Grid cell size in degrees (roughly 69 miles per degree at the equator)
-    const spatialIndex = new Map<string, EntityData[]>();
-    
-    entities.forEach(entity => {
-      if (entity.latitude && entity.longitude) {
-        // Calculate grid cell key based on coordinates
-        const cellX = Math.floor(entity.longitude / gridSize);
-        const cellY = Math.floor(entity.latitude / gridSize);
-        const cellKey = `${cellX}:${cellY}`;
-        
-        // Add entity to its grid cell
-        if (!spatialIndex.has(cellKey)) {
-          spatialIndex.set(cellKey, []);
-        }
-        spatialIndex.get(cellKey)!.push(entity);
-      }
-    });
-    
-    return spatialIndex;
-  }
-  
+  // Return the hook result
   return {
     ahjs,
     utilities,
     isLoading,
     error,
-    calculateDistances,
-    retryFetch // Expose retry function to allow users to retry when errors occur
+    calculateDistances
   };
-}
+};

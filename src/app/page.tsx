@@ -1,22 +1,22 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import MapView from '@/components/MapView';
-import DualListView from '@/components/DualListView';
-import ProjectListView from '@/components/ProjectListView';
-import EntityListView from '@/components/EntityListView';
-import ImprovedFilterPanel from '@/components/ImprovedFilterPanel';
-import EmptyState from '@/components/EmptyState';
-import { useProjects } from '@/hooks/useProjects';
-import { useEntities } from '@/hooks/useEntities';
-import { Project, ProjectFilter } from '@/utils/types';
+import { FiList, FiMap } from 'react-icons/fi';
+
+import { Project } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
-import { FiMap, FiList } from 'react-icons/fi';
+import { useData } from '@/contexts/DataContext';
+
+import MapView from '@/components/MapView';
+import ProjectListView from '@/components/ProjectListView';
+import { default as EntityListView } from '@/components/EntityListView';
+import ImprovedFilterPanel from '@/components/ImprovedFilterPanel';
 
 export default function HomePage() {
   const router = useRouter();
   const { user, userProfile, isLoading: authLoading } = useAuth();
+  const dataContext = useData(); // Access the DataContext
   
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -32,7 +32,7 @@ export default function HomePage() {
   useEffect(() => {
     // When switching to map view, dispatch a resize event to help Mapbox recalculate dimensions
     if (viewMode === 'map') {
-      console.log('Switching to map view, triggering resize event');
+      // console.log('Switching to map view, triggering resize event');
       setTimeout(() => {
         window.dispatchEvent(new Event('resize'));
       }, 100);
@@ -45,164 +45,91 @@ export default function HomePage() {
   // State for selected project
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   
-  // State for user location
-  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  // Use the userLocation directly from dataContext instead of maintaining local state
+  const { userLocation, setUserLocation } = dataContext || {};
   
-  // Use the projects hook to fetch and filter data
+  // Use our centralized data context
   const { 
+    // Data
     projects, 
-    allProjects, 
-    isLoading: projectsLoading, 
-    error: projectsError, 
+    ahjs, 
+    utilities, 
+    
+    // Loading and error states
+    isLoading: dataLoading, 
+    error: dataError, 
+    
+    // Filter state and actions
     filters, 
-    addFilter: originalAddFilter, 
+    addFilter, 
     removeFilter, 
     clearFilters,
-    handleSearch,
+    
+    // Search functionality
     searchTerms,
+    handleSearch,
+    
+    // User-specific filters
+    showOnlyMyProjects,
+    toggleShowOnlyMyProjects,
+    
+    // 45-day filter
     show45DayQualified,
     set45DayFilter,
-    showOnlyMyProjects,
-    toggleShowOnlyMyProjects
-  } = useProjects();
-  
-  // Use the entities hook to fetch AHJs and Utilities with coordinates
-  const {
-    ahjs,
-    utilities,
-    isLoading: entitiesLoading,
-    error: entitiesError
-  } = useEntities();
-
-  // Add a filter
-  const addFilter = (filter: ProjectFilter) => {
-    // Check if filter already exists to avoid duplicates
-    const exists = filters.some(f => 
-      f.type === filter.type && f.value === filter.value
-    );
     
-    if (!exists) {
-      originalAddFilter(filter);
-    }
-  };
+    // Sorting
+    updateSortOptions
+  } = useData();
 
   // Handle project selection
-  const handleSelectProject = (project: Project) => {
+  const handleSelectProject = (project: Project | null) => {
+    if (!project) {
+      setSelectedProject(null);
+      return;
+    }
+    
     setSelectedProject(prevSelected => 
       prevSelected && prevSelected.id === project.id ? null : project
     );
   };
 
-  // Get user location
-  useEffect(() => {
-    // Define a function to safely get the user's location
-    const getUserLocation = () => {
-      console.log('[GEOLOCATION] Starting geolocation request...');
-      
-      // Default location (fallback) - Denver, CO coordinates
-      const defaultLocation = {
-        latitude: 39.7392,
-        longitude: -104.9903
-      };
-      
-      try {
-        if (navigator.geolocation) {
-          console.log('[GEOLOCATION] Browser supports geolocation API');
-          
-          // Try to get user location with reasonable options
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              // Check if coordinates are valid
-              if (position.coords.latitude === 0 && position.coords.longitude === 0) {
-                console.log('[GEOLOCATION] Warning: Received 0,0 coordinates, likely an error');
-                console.log('[GEOLOCATION] Using default location as fallback');
-                setUserLocation(defaultLocation);
-                return;
-              }
-              
-              const userCoords = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude
-              };
-              console.log('[GEOLOCATION] Success! User coordinates obtained');
-              console.log('[GEOLOCATION] Accuracy:', position.coords.accuracy, 'meters');
-              setUserLocation(userCoords);
-            },
-            (error) => {
-              // Handle specific geolocation errors
-              let errorMessage = 'Unknown error';
-              switch(error.code) {
-                case error.PERMISSION_DENIED:
-                  errorMessage = 'User denied the request for geolocation';
-                  break;
-                case error.POSITION_UNAVAILABLE:
-                  errorMessage = 'Location information is unavailable';
-                  break;
-                case error.TIMEOUT:
-                  errorMessage = 'The request to get user location timed out';
-                  break;
-              }
-              console.log(`[GEOLOCATION] Error: ${errorMessage}. Error code: ${error.code}`);
-              
-              // Use default location for any error
-              console.log('[GEOLOCATION] Using default location as fallback for distance calculations');
-              setUserLocation(defaultLocation);
-            },
-            { 
-              timeout: 15000,         // 15 second timeout
-              maximumAge: 300000,     // Accept cached positions up to 5 minutes old
-              enableHighAccuracy: false  // Don't need high accuracy, saves battery
-            }
-          );
-          console.log('[GEOLOCATION] Request sent, waiting for result...');
-        } else {
-          console.log('[GEOLOCATION] Browser does not support geolocation API');
-          console.log('[GEOLOCATION] Using default location as fallback');
-          setUserLocation(defaultLocation);
-        }
-      } catch (err) {
-        console.log('[GEOLOCATION] Unexpected error accessing geolocation');
-        console.log('[GEOLOCATION] Using default location as fallback');
-        setUserLocation(defaultLocation);
-      }
-    };
-    
-    // Call the function
-    getUserLocation();
-  }, []);
+  // Note: User location is now handled directly in the DataContext
 
   // Handle sorting
-  const [sortField, setSortField] = useState('address');
+  const [sortField, setSortField] = useState<string>('address'); // Add type annotation
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
   const handleSort = (field: string, direction: 'asc' | 'desc') => {
     setSortField(field);
     setSortDirection(direction);
+    updateSortOptions?.(field, direction); // Add optional chaining
   };
 
-  // Check if there's an error or loading state
-  const error = projectsError || entitiesError;
-  if (error) {
+  // Check if there's an error from the data context
+  if (dataError) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-white p-4">
         <h1 className="text-2xl font-bold mb-4">Error Loading Data</h1>
-        <p className="mb-6 text-red-400">{error}</p>
+        <p className="mb-6 text-red-400">{dataError}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   // Show loading state
-  const isLoading = projectsLoading || entitiesLoading;
-  if (isLoading || authLoading) {
+  if (dataLoading || authLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#121212]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#121212]">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+        <p className="text-gray-400 mt-4">Loading data...</p>
       </div>
     );
   }
-
-  // Import EmptyState component instead of defining inline
-  // EmptyState component is now used directly where needed
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-white">
@@ -226,135 +153,98 @@ export default function HomePage() {
         
         {/* Main content area - takes remaining space */}
         <div className="flex-1 flex flex-col h-full overflow-hidden">
-          {error ? (
-            <div className="p-4 bg-red-900/50 border border-red-700 rounded-md m-4 flex flex-col items-center">
-              <p className="mb-4">Error loading projects: {error}</p>
-              <button 
-                onClick={() => window.location.reload()} 
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          <div className="w-full h-full flex flex-col">
+            {/* View toggle tabs */}
+            <div className="flex border-b border-gray-800 bg-gray-900 px-4">
+              <button
+                className={`px-6 py-3 text-sm font-medium border-b-2 ${viewMode === 'list' 
+                  ? 'border-blue-500 text-blue-500' 
+                  : 'border-transparent text-gray-400 hover:text-gray-300'}`}
+                onClick={() => setViewMode('list')}
               >
-                Retry
+                <FiList className="inline mr-2" /> List View
+              </button>
+              <button
+                className={`px-6 py-3 text-sm font-medium border-b-2 ${viewMode === 'map' 
+                  ? 'border-blue-500 text-blue-500' 
+                  : 'border-transparent text-gray-400 hover:text-gray-300'}`}
+                onClick={() => setViewMode('map')}
+              >
+                <FiMap className="inline mr-2" /> Map View
               </button>
             </div>
-          ) : isLoading ? (
-            <div className="flex flex-col justify-center items-center h-full">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
-              <p className="text-gray-400">Loading projects...</p>
-              <button 
-                onClick={() => window.location.reload()} 
-                className="mt-8 px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
+            
+            {/* Content area */}
+            <div className="flex-1 relative">
+              {/* Map View - always rendered but conditionally visible */}
+              <div 
+                className={`absolute inset-0 ${viewMode === 'map' ? 'block' : 'hidden'}`}
+                style={{ width: '100%', height: '100%' }} // Ensure the container has explicit dimensions
               >
-                Refresh if stuck
-              </button>
-            </div>
-          ) : (
-            <div className="w-full h-full flex flex-col">
-              {/* View toggle tabs */}
-              <div className="flex border-b border-gray-800 bg-gray-900 px-4">
-                <button
-                  className={`px-6 py-3 text-sm font-medium border-b-2 ${viewMode === 'list' 
-                    ? 'border-blue-500 text-blue-500' 
-                    : 'border-transparent text-gray-400 hover:text-gray-300'}`}
-                  onClick={() => setViewMode('list')}
-                >
-                  <FiList className="inline mr-2" /> List View
-                </button>
-                <button
-                  className={`px-6 py-3 text-sm font-medium border-b-2 ${viewMode === 'map' 
-                    ? 'border-blue-500 text-blue-500' 
-                    : 'border-transparent text-gray-400 hover:text-gray-300'}`}
-                  onClick={() => setViewMode('map')}
-                >
-                  <FiMap className="inline mr-2" /> Map View
-                </button>
+                <MapView 
+                  selectedProject={selectedProject}
+                  onSelectProject={handleSelectProject}
+                />
               </div>
               
-              {/* Content area */}
-              <div className="flex-1 relative">
-                {/* Map View - always rendered but conditionally visible */}
-                <div 
-                  className={`absolute inset-0 ${viewMode === 'map' ? 'block' : 'hidden'}`}
-                  style={{ width: '100%', height: '100%' }} // Ensure the container has explicit dimensions
-                >
-                  <MapView 
-                    projects={projects || []}
-                    selectedProject={selectedProject}
-                    onSelectProject={(project) => {
-                      if (project) handleSelectProject(project);
+              {/* List View - always rendered but conditionally visible */}
+              <div className={`absolute inset-0 p-4 ${viewMode === 'list' ? 'block' : 'hidden'}`}>
+                {/* Entity view toggle */}
+                <div className="flex mb-4">
+                  <button
+                    className={`px-4 py-2 text-sm font-medium rounded-md ${entityViewMode === 'entities' 
+                      ? 'bg-blue-500 text-white' 
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                    onClick={() => setEntityViewMode('entities')}
+                  >
+                    Entities
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium rounded-md ml-2 ${entityViewMode === 'projects' 
+                      ? 'bg-blue-500 text-white' 
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                    onClick={() => setEntityViewMode('projects')}
+                  >
+                    My Projects
+                  </button>
+                </div>
+                
+                {/* Entity List */}
+                <div className={`h-full overflow-hidden ${entityViewMode === 'entities' ? 'block' : 'hidden'}`}>
+                  <EntityListView
+                    onViewOnMap={(entityId: string, entityType: 'ahj' | 'utility') => {
+                      // Find a project with this entity to center the map on
+                      const projectWithEntity = projects.find(project => {
+                        if (entityType === 'ahj') {
+                          return project.ahj?.id === entityId;
+                        } else {
+                          return project.utility?.id === entityId;
+                        }
+                      });
+                      
+                      if (projectWithEntity) {
+                        setViewMode('map');
+                        handleSelectProject(projectWithEntity);
+                      }
                     }}
-                    filters={filters}
-                    ahjs={ahjs as any[] || []}
-                    utilities={utilities as any[] || []}
                   />
                 </div>
                 
-                {/* List View - always rendered but conditionally visible */}
-                <div className={`absolute inset-0 p-4 ${viewMode === 'list' ? 'block' : 'hidden'}`}>
-                  {/* Entity view toggle */}
-                  <div className="flex mb-4">
-                    <button
-                      className={`px-4 py-2 text-sm font-medium rounded-md ${entityViewMode === 'entities' 
-                        ? 'bg-blue-500 text-white' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                      onClick={() => setEntityViewMode('entities')}
-                    >
-                      Entities
-                    </button>
-                    <button
-                      className={`px-4 py-2 text-sm font-medium rounded-md ml-2 ${entityViewMode === 'projects' 
-                        ? 'bg-blue-500 text-white' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                      onClick={() => setEntityViewMode('projects')}
-                    >
-                      My Projects
-                    </button>
-                  </div>
-                  
-                  {/* Entity List */}
-                  <div className={`h-full overflow-hidden ${entityViewMode === 'entities' ? 'block' : 'hidden'}`}>
-                    <EntityListView
-                      projects={projects || []}
-                      userLocation={userLocation}
-                      onViewOnMap={(entityName: string, entityType: 'ahj' | 'utility') => {
-                        // Find a project with this entity to center the map on
-                        const projectWithEntity = projects.find(project => {
-                          if (entityType === 'ahj') {
-                            return project.ahj?.name === entityName;
-                          } else {
-                            return project.utility?.name === entityName;
-                          }
-                        });
-                        
-                        if (projectWithEntity) {
-                          setViewMode('map');
-                          handleSelectProject(projectWithEntity);
-                        }
-                      }}
-                      onAddFilter={addFilter}
-                      onRemoveFilter={removeFilter}
-                      filters={filters}
-                    />
-                  </div>
-                  
-                  {/* Project List */}
-                  <div className={`h-full overflow-hidden ${entityViewMode === 'projects' ? 'block' : 'hidden'}`}>
-                    <ProjectListView
-                      projects={projects.filter(p => p.rep_id === userProfile?.rep_id) || []}
-                      selectedProject={selectedProject}
-                      onSelectProject={handleSelectProject}
-                      onViewOnMap={(project: Project) => {
-                        setViewMode('map');
-                        if (project) handleSelectProject(project);
-                      }}
-                      sortField={sortField}
-                      sortDirection={sortDirection}
-                      onSort={handleSort}
-                    />
-                  </div>
+                {/* Project List */}
+                <div className={`h-full overflow-hidden ${entityViewMode === 'projects' ? 'block' : 'hidden'}`}>
+                  <ProjectListView
+                    selectedProject={selectedProject}
+                    onSelectProject={handleSelectProject}
+                    onViewOnMap={(project: Project) => {
+                      setViewMode('map');
+                      handleSelectProject(project);
+                    }}
+                    showOnlyUserProjects={true}
+                  />
                 </div>
               </div>
             </div>
-          )}
+          </div>
         </div>
       </main>
     </div>

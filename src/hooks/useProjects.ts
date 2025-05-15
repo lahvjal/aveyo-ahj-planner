@@ -14,72 +14,161 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
   const [show45DayQualified, setShow45DayQualified] = useState<'all' | 'qualified' | 'not-qualified'>('all');
   const { user, userProfile, isAdmin } = useAuth();
 
+  // Cache key for projects data
+  const PROJECTS_CACHE_KEY = 'aveyo_projects_cache';
+  
+  // Function to load projects from cache
+  const loadFromCache = () => {
+    try {
+      const cachedData = localStorage.getItem(PROJECTS_CACHE_KEY);
+      if (!cachedData) return null;
+      
+      const parsed = JSON.parse(cachedData);
+      return parsed;
+    } catch (error) {
+      return null;
+    }
+  };
+  
+  // Function to save projects to cache
+  const saveToCache = (projects: Project[]) => {
+    try {
+      const cacheData = {
+        projects,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheData));
+    } catch (error) {
+      // Silent fail for cache operations
+    }
+  };
+  
   // Fetch all project data
   useEffect(() => {
     const fetchData = async () => {
-      console.log('Fetching project data...');
       setIsLoading(true);
       
       // Set a timeout to ensure loading state doesn't get stuck
       const timeoutId = setTimeout(() => {
-        console.warn('Data fetching timeout reached - resetting loading state');
+        console.warn('[Projects] Data fetching timeout reached - resetting loading state');
         setIsLoading(false);
-        setError('Data fetching timeout reached. Please refresh the page.');
-      }, 15000); // 15 second timeout
+        
+        // Try to use cached data as fallback on timeout
+        const cachedData = loadFromCache();
+        if (cachedData && cachedData.projects?.length > 0) {
+          console.log('[Projects] Using cached data as fallback after timeout');
+          setProjects(cachedData.projects);
+          setFilteredProjects(cachedData.projects);
+          setError('Using cached data. Latest data could not be loaded due to timeout.');
+        } else {
+          setError('Data fetching timeout reached. Please refresh the page.');
+        }
+      }, 30000); // 30 second timeout (increased from 15s)
+      
+      // Try to load from cache first before making any network requests
+      const cachedData = loadFromCache();
+      const cacheAge = cachedData ? (Date.now() - cachedData.timestamp) / (60 * 1000) : null;
+      
+      // Always show cached data immediately if available, but ALWAYS fetch fresh data
+      if (cachedData) {
+        // Immediately set cached data to avoid loading state
+        setProjects(cachedData.projects);
+        setFilteredProjects(cachedData.projects);
+        setIsLoading(false);
+        
+        // But ALWAYS continue to fetch fresh data regardless of cache age
+        
+        // Continue fetching in the background
+      }
       
       try {
-        // Fetch podio_data (projects)
-        const { data, error } = await supabase
-          .from('podio_data')
-          .select('*');
         
-        // Clear the timeout since we got a response
+        // Create a single timeout promise for all requests
+        const FETCH_TIMEOUT = 25000; // 25 second timeout for individual requests
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('Data fetch timed out'));
+          }, FETCH_TIMEOUT);
+        });
+        
+        // Fetch all data in parallel to reduce total wait time
+        const [projectsResult, ahjResult, utilityResult, financierResult] = await Promise.all([
+          // Fetch projects with timeout
+          Promise.race([
+            supabase.from('podio_data').select('*'),
+            timeoutPromise
+          ]) as Promise<any>,
+          
+          // Fetch AHJs with timeout
+          Promise.race([
+            supabase.from('ahj').select('*'),
+            timeoutPromise
+          ]) as Promise<any>,
+          
+          // Fetch utilities with timeout
+          Promise.race([
+            supabase.from('utility').select('*'),
+            timeoutPromise
+          ]) as Promise<any>,
+          
+          // Fetch financiers with timeout
+          Promise.race([
+            supabase.from('financier').select('*'),
+            timeoutPromise
+          ]) as Promise<any>
+        ]);
+        
+        // Clear the timeout since we got responses
         clearTimeout(timeoutId);
         
-        console.log('Fetched podio_data:', data?.length || 0, 'records');
+        // Extract data with proper error handling
+        const data = projectsResult.data || [];
+        console.log('[Projects] Fetched podio_data:', data.length, 'records');
         
-        if (error) {
-          console.error('Error fetching podio_data:', error);
-          throw error;
-        }
-        
-        // Fetch related data with error handling for each request
-        let ahjRes, utilityRes, financierRes;
-        
-        try {
-          ahjRes = await supabase.from('ahj').select('*');
-          if (ahjRes.error) throw new Error(`Error fetching AHJ data: ${ahjRes.error.message}`);
-        } catch (err) {
-          console.error('Error fetching AHJ data:', err);
-          ahjRes = { data: [] };
+        if (projectsResult.error) {
+          console.error('[Projects] Error fetching podio_data:', projectsResult.error);
+          throw projectsResult.error;
         }
         
-        try {
-          utilityRes = await supabase.from('utility').select('*');
-          if (utilityRes.error) throw new Error(`Error fetching utility data: ${utilityRes.error.message}`);
-        } catch (err) {
-          console.error('Error fetching utility data:', err);
-          utilityRes = { data: [] };
+        // Process related data with error handling
+        let ahjRes = { data: [] };
+        let utilityRes = { data: [] };
+        let financierRes = { data: [] };
+        
+        // Handle AHJ data
+        if (!ahjResult.error) {
+          ahjRes = ahjResult;
         }
         
-        try {
-          financierRes = await supabase.from('financier').select('*');
-          if (financierRes.error) throw new Error(`Error fetching financier data: ${financierRes.error.message}`);
-        } catch (err) {
-          console.error('Error fetching financier data:', err);
-          financierRes = { data: [] };
+        // Handle Utility data
+        if (!utilityResult.error) {
+          utilityRes = utilityResult;
         }
         
-        // Log the structure of the first items to debug
-        if (ahjRes.data && ahjRes.data.length > 0) {
-          console.log('AHJ first item structure:', ahjRes.data[0]);
+        // Handle Financier data
+        if (!financierResult.error) {
+          financierRes = financierResult;
         }
-        if (utilityRes.data && utilityRes.data.length > 0) {
-          console.log('Utility first item structure:', utilityRes.data[0]);
-        }
-        if (financierRes.data && financierRes.data.length > 0) {
-          console.log('Financier first item structure:', financierRes.data[0]);
-        }
+        
+        // Log the fresh data received from Supabase
+        console.log('[Projects] Fresh data received:', {
+          projects: {
+            count: projectsResult.data?.length || 0,
+            sample: projectsResult.data?.length > 0 ? projectsResult.data[0] : null
+          },
+          ahjs: {
+            count: ahjRes.data?.length || 0,
+            sample: ahjRes.data?.length > 0 ? ahjRes.data[0] : null
+          },
+          utilities: {
+            count: utilityRes.data?.length || 0,
+            sample: utilityRes.data?.length > 0 ? utilityRes.data[0] : null
+          },
+          financiers: {
+            count: financierRes.data?.length || 0,
+            sample: financierRes.data?.length > 0 ? financierRes.data[0] : null
+          }
+        });
         
         // Create lookup maps for faster access - use the correct ID fields
         const ahjMap = Object.fromEntries(
@@ -195,19 +284,44 @@ export function useProjects(initialFilters: ProjectFilter[] = []) {
           };
         });
         
-        console.log('Transformed data:', transformedData.length, 'projects');
+        console.log('[Projects] Transformed data:', transformedData.length, 'projects');
+        
+        // Save successful results to cache
+        saveToCache(transformedData);
+        
+        // Update state with the new data
         setProjects(transformedData);
         setFilteredProjects(transformedData);
+        setIsLoading(false);
       } catch (err: any) {
-        console.error('Error fetching project data:', err);
-        setError(err.message || 'An error occurred while fetching project data');
+        console.error('[Projects] Error fetching project data:', err);
         
-        // Even if there's an error, set projects to an empty array to avoid undefined errors
-        setProjects([]);
-        setFilteredProjects([]);
+        // Try to use cached data as fallback if available
+        const cachedData = loadFromCache();
+        if (cachedData && cachedData.projects?.length > 0) {
+          console.log('[Projects] Using cached data as fallback after error');
+          setProjects(cachedData.projects);
+          setFilteredProjects(cachedData.projects);
+          
+          // Show a more specific error message
+          const isNetworkError = err.message?.includes('network') || 
+                               err.message?.includes('timeout') || 
+                               err.message?.includes('fetch');
+          const errorType = isNetworkError ? 'network connection' : 'data loading';
+          setError(`Using cached data. Latest data could not be loaded due to ${errorType} issues.`);
+        } else {
+          // Provide more helpful error message
+          setError(err.message || 'An error occurred while fetching project data. Please try refreshing the page.');
+          
+          // Even if there's an error, set projects to an empty array to avoid undefined errors
+          setProjects([]);
+          setFilteredProjects([]);
+        }
       } finally {
         // Always set loading to false to prevent UI from getting stuck
         setIsLoading(false);
+        // Always clear the timeout to prevent memory leaks
+        clearTimeout(timeoutId);
       }
     };
     
