@@ -33,6 +33,42 @@
   scrollbar-color: #333333 #1e1e1e;
 }
 
+/* Pulsing animation for entity markers */
+@keyframes pulse {
+  0% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    opacity: 0.8;
+  }
+}
+
+/* Specific styling for AHJ and utility markers */
+.ahj-pulse-marker {
+  box-shadow: 0 0 0 rgba(135, 206, 250, 0.6);
+  animation: pulse 1.5s infinite;
+  background-color: #87CEFA; /* Light blue */
+  border-radius: 50%;
+  z-index: 5;
+}
+
+.utility-pulse-marker {
+  box-shadow: 0 0 0 rgba(255, 255, 0, 0.6);
+  animation: pulse 1.5s infinite;
+  background-color: #FFFF00; /* Yellow */
+  border-radius: 50%;
+  z-index: 5;
+}
+
 :root {
   --background: #121212;
   --foreground: #ffffff;
