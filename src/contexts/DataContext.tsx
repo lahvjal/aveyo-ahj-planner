@@ -515,8 +515,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     });
     // 2. Extract entity IDs from filtered projects
-    const ahjIds = new Set(filteredProjects.map(p => p.ahj?.id).filter(Boolean));
-    const utilityIds = new Set(filteredProjects.map(p => p.utility?.id).filter(Boolean));
+    // const ahjIds = new Set(filteredProjects.map(p => p.ahj?.id).filter(Boolean));
+    const ahjIds = new Set((filteredProjects || []).map(p => p.ahj?.id).filter(Boolean));
+    const utilityIds = new Set((filteredProjects || []).map(p => p.utility?.id).filter(Boolean));
 
     // 3. Determine if we should filter entities based on project references
     // Check if we have entity-specific filters (ahj or utility type)
