@@ -679,7 +679,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // Find all projects that have the selected utility
         // Access the utility ID directly from the utility_company_item_id property
-        const projectsWithSelectedUtility = filteredProjects.filter(p => {
+        const projectsWithSelectedUtility = (filteredProjects || []).filter(p => {
           // Get the ID from the direct property
           const projectUtilityId = p.utility_company_item_id;
           
@@ -688,11 +688,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         
         // Check if any projects match the selected utility ID
-        const matchingProjects = filteredProjects.filter(p => p.utility?.id === selectedUtilityFilter.entityId);
+        const matchingProjects = (filteredProjects || []).filter(p => p.utility?.id === selectedUtilityFilter.entityId);
         
         // Get the AHJ IDs from those projects using the direct ahj_item_id property
         const relatedAhjIds = new Set(
-          projectsWithSelectedUtility
+          (projectsWithSelectedUtility || [])
             .map(p => p.ahj_item_id ? p.ahj_item_id.toString() : null)
             .filter(Boolean)
         );
@@ -738,13 +738,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const ahjId = selectedAhjFilter.entityId; // Store in variable to avoid TypeScript errors
         
         // Check if any projects match the selected AHJ ID using string comparison
-        const matchingProjects = filteredProjects.filter(p => 
+        const matchingProjects = (filteredProjects || []).filter(p => 
           p.ahj?.id && p.ahj.id.toString() === ahjId.toString()
         );
         
         // Try a different approach to find projects with the selected AHJ
         // Log the raw project data to see all available fields
-        if (filteredProjects.length > 0) {
+        if (filteredProjects && filteredProjects.length > 0) {
           const firstProject = filteredProjects[0];
           console.log('COMPLETE PROJECT DEBUG (AHJ):', {
             fullProject: firstProject,
@@ -757,7 +757,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // Find all projects that have the selected AHJ
         // Access the AHJ ID directly from the ahj_item_id property
-        const projectsWithSelectedAhj = filteredProjects.filter(p => {
+        const projectsWithSelectedAhj = (filteredProjects || []).filter(p => {
           // Get the ID from the direct property
           const projectAhjId = p.ahj_item_id;
           
@@ -767,7 +767,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // Get the Utility IDs from those projects using the direct utility_company_item_id property
         const relatedUtilityIds = new Set(
-          projectsWithSelectedAhj
+          (projectsWithSelectedAhj || [])
             .map(p => p.utility_company_item_id ? p.utility_company_item_id.toString() : null)
             .filter(Boolean)
         );
