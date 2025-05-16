@@ -86,8 +86,8 @@ export default function ProjectsPage() {
           <div className="h-full">
             <ImprovedFilterPanel
               filters={{
-                projectFilters: filters,
-                entityFilters: []
+                filters: filters,
+                sortOptions: { field: sortField, direction: sortDirection }
               }}
               addFilter={addFilter}
               removeFilter={(filterId) => {
