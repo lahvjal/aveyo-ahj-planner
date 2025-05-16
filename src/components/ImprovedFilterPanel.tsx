@@ -29,23 +29,25 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
   ) => {
     // Toggle the filter - if it's already active, remove it
     if (isFilterActive(type, value)) {
-      // Find the filter in either projectFilters or entityFilters
-      const allFilters = [...filters.projectFilters, ...filters.entityFilters];
-      const filterToRemove = allFilters.find(f => f.type === type && f.value === value);
+      // Find the filter in the consolidated filters array
+      const filterToRemove = filters.filters.find(f => f.type === type && f.value === value);
       if (filterToRemove && filterToRemove.id) {
         removeFilter(filterToRemove.id);
       }
     } else {
       // Add the filter
-      addFilter({ type, value });
+      addFilter({ 
+        type, 
+        value,
+        label: `${type.toUpperCase()}: ${value}`
+      });
     }
   };
 
   // Check if a filter is active
   const isFilterActive = (type: string, value: string) => {
-    // Check in both projectFilters and entityFilters
-    const allFilters = [...filters.projectFilters, ...filters.entityFilters];
-    return allFilters.some(f => f.type === type && f.value === value);
+    // Check in the consolidated filters array
+    return filters.filters.some(f => f.type === type && f.value === value);
   };
 
   // Handle search input
@@ -151,7 +153,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
       </div>
       
       {/* Active Filters */}
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-4 pt-4">
         <div className="flex flex-wrap gap-2">
           {/* Search Terms */}
           {typeof searchTerms === 'string' && searchTerms.trim() !== '' && (
@@ -163,13 +165,13 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
             />
           )}
           
-          {/* Project Filters */}
-          {filters.projectFilters.map((filter) => {
+          {/* All Filters */}
+          {filters.filters.map((filter) => {
             if (filter.type === 'search') return null; // Skip search filters as they're handled above
             if (filter.type === 'myprojects') {
               return (
                 <ActiveFilterChip
-                  key={`myprojects-${filter.value}`}
+                  key={filter.id || `myprojects-${filter.value}`}
                   label="My Projects"
                   type="myprojects"
                   onRemove={() => {
@@ -181,35 +183,24 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
               );
             }
             
-            // Use the filter value directly as the label
             return (
               <ActiveFilterChip
-                key={`${filter.type}-${filter.value}`}
-                label={filter.value || filter.type}
+                key={filter.id || `${filter.type}-${filter.value}`}
+                label={filter.label || `${filter.type}: ${filter.value}`}
                 type={filter.type}
-                onRemove={() => filter.id && removeFilter(filter.id)}
+                onRemove={() => removeFilter(filter.id || '')}
               />
             );
           })}
           
-          {/* Entity Filters */}
-          {filters.entityFilters.map((filter) => (
-            <ActiveFilterChip
-              key={`${filter.type}-${filter.value}`}
-              label={filter.value || filter.type}
-              type={filter.type}
-              onRemove={() => filter.id && removeFilter(filter.id, true)}
-            />
-          ))}
-          
-          {/* Clear All Button - only show if there are filters or search terms */}
-          {(filters.projectFilters.length > 0 || filters.entityFilters.length > 0 || (typeof searchTerms === 'string' && searchTerms.trim() !== '')) && (
-            <button
+          {/* Clear All button */}
+          {(filters.filters.length > 0 || searchTerms) && (
+            <button 
               onClick={() => {
                 clearFilters();
                 clearSearchTerms();
               }}
-              className="px-2 py-1 text-xs text-gray-300 hover:text-white"
+              className="text-xs text-blue-400 hover:text-blue-300"
             >
               Clear All
             </button>
@@ -242,7 +233,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
         </CollapsibleFilterSection>
         
         {/* Financier Section */}
-        <CollapsibleFilterSection title="Financier">
+        {/* <CollapsibleFilterSection title="Financier">
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               {renderClassificationButton('financier', 'A', 'Class A')}
@@ -250,10 +241,10 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
               {renderClassificationButton('financier', 'C', 'Class C')}
             </div>
           </div>
-        </CollapsibleFilterSection>
+        </CollapsibleFilterSection> */}
         
         {/* 45-Day Program Section */}
-        <CollapsibleFilterSection title="45-Day Program">
+        {/* <CollapsibleFilterSection title="45-Day Program">
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               <button
@@ -278,7 +269,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
               </button>
             </div>
           </div>
-        </CollapsibleFilterSection>
+        </CollapsibleFilterSection> */}
       </div>
       
       {/* Logout Button */}

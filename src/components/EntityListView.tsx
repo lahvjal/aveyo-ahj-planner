@@ -35,8 +35,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     removeFilter,
     userLocation // Get user location from DataContext
   } = useData();
-  // console.log('ENTITY PAGE processed AHJs', allAhjs);
-  // console.log('ENTITY PAGE processed Utilities', allUtilities);
   // Get project entity IDs for reference (used for debugging only)
   const projectAhjIds = useMemo(() => 
     new Set(projects.map(p => p.ahj?.id).filter(Boolean)), 
@@ -110,60 +108,35 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
   
   // Determine which entities are highlighted based on filters
   const highlightedAhjId = useMemo(() => {
-    const ahjFilter = filters.entityFilters.find(f => 
+    const ahjFilter = filters.filters.find(f => 
       f.type === 'ahj' && f.filterSource === 'entity-selection'
     );
     return ahjFilter?.entityId || null;
-  }, [filters.entityFilters]);
-  
+  }, [filters.filters]);
+
   const highlightedUtilityId = useMemo(() => {
-    const utilityFilter = filters.entityFilters.find(f => 
+    const utilityFilter = filters.filters.find(f => 
       f.type === 'utility' && f.filterSource === 'entity-selection'
     );
     return utilityFilter?.entityId || null;
-  }, [filters.entityFilters]);
+  }, [filters.filters]);
   
-  // Handle entity selection
+  // Handle AHJ selection
   const handleAhjSelect = (ahj: EntityData) => {
-    console.log('ENTITY SELECTION DEBUG: Selecting AHJ', {
-      id: ahj.id,
-      name: ahj.name,
-      projectCount: ahj.projectCount,
-      relatedUtilityCount: ahj.relatedUtilityCount,
-      relatedUtilityIds: ahj.relatedUtilityIds
-    });
-    
     // Check if this entity is already highlighted via a filter
     const isAlreadyFiltered = highlightedAhjId === ahj.id;
-    console.log('ENTITY SELECTION DEBUG: Is already filtered?', isAlreadyFiltered, 'Highlighted ID:', highlightedAhjId);
-    
-    // Log current filter state before making changes
-    console.log('ENTITY SELECTION DEBUG: Current filters before change:', {
-      entityFilters: filters.entityFilters.map(f => ({
-        id: f.id,
-        type: f.type,
-        entityType: f.entityType,
-        entityId: f.entityId,
-        value: f.value,
-        filterSource: f.filterSource
-      })),
-      projectFilters: filters.projectFilters.length
-    });
     
     if (isAlreadyFiltered) {
       // If already filtered, find and remove the filter
-      const existingFilter = filters.entityFilters.find(f => 
+      const existingFilter = filters.filters.find(f => 
         (f.type === 'ahj' || f.entityType === 'ahj') && 
         ((f.filterSource === 'entity-selection' && f.entityId === ahj.id) ||
-         (f.value === ahj.name))
+        (f.value === ahj.name))
       );
-      
-      console.log('ENTITY SELECTION DEBUG: Found existing filter to remove:', existingFilter);
       
       if (existingFilter) {
         // Use removeFilter to properly remove the filter
-        removeFilter(existingFilter.id || '', true); // Always true for entity filters
-        console.log(`ENTITY SELECTION DEBUG: Deselected AHJ ${ahj.id}, removing filter ${existingFilter.id}`);
+        removeFilter(existingFilter.id || '');
       }
     } else {
       // If selecting, add an entity-selection filter
@@ -181,52 +154,26 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
         }
       };
       
-      console.log('ENTITY SELECTION DEBUG: Adding new filter:', newFilter);
       addFilter(newFilter);
-      console.log(`ENTITY SELECTION DEBUG: Selected AHJ ${ahj.id}, added filter`);
     }
   };
-  
+
+  // Handle Utility selection
   const handleUtilitySelect = (utility: EntityData) => {
-    console.log('ENTITY SELECTION DEBUG: Selecting Utility', {
-      id: utility.id,
-      name: utility.name,
-      projectCount: utility.projectCount,
-      relatedAhjCount: utility.relatedAhjCount,
-      relatedAhjIds: utility.relatedAhjIds
-    });
-    
     // Check if this entity is already highlighted via a filter
     const isAlreadyFiltered = highlightedUtilityId === utility.id;
-    console.log('ENTITY SELECTION DEBUG: Is already filtered?', isAlreadyFiltered, 'Highlighted ID:', highlightedUtilityId);
-    
-    // Log current filter state before making changes
-    console.log('ENTITY SELECTION DEBUG: Current filters before change:', {
-      entityFilters: filters.entityFilters.map(f => ({
-        id: f.id,
-        type: f.type,
-        entityType: f.entityType,
-        entityId: f.entityId,
-        value: f.value,
-        filterSource: f.filterSource
-      })),
-      projectFilters: filters.projectFilters.length
-    });
     
     if (isAlreadyFiltered) {
       // If already filtered, find and remove the filter
-      const existingFilter = filters.entityFilters.find(f => 
+      const existingFilter = filters.filters.find(f => 
         (f.type === 'utility' || f.entityType === 'utility') && 
         ((f.filterSource === 'entity-selection' && f.entityId === utility.id) ||
-         (f.value === utility.name))
+        (f.value === utility.name))
       );
-      
-      console.log('ENTITY SELECTION DEBUG: Found existing filter to remove:', existingFilter);
       
       if (existingFilter) {
         // Use removeFilter to properly remove the filter
-        removeFilter(existingFilter.id || '', true); // Always true for entity filters
-        console.log(`ENTITY SELECTION DEBUG: Deselected Utility ${utility.id}, removing filter ${existingFilter.id}`);
+        removeFilter(existingFilter.id || '');
       }
     } else {
       // If selecting, add an entity-selection filter
@@ -244,9 +191,7 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
         }
       };
       
-      console.log('ENTITY SELECTION DEBUG: Adding new filter:', newFilter);
       addFilter(newFilter);
-      console.log(`ENTITY SELECTION DEBUG: Selected Utility ${utility.id}, added filter`);
     }
   };
   

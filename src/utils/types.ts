@@ -118,10 +118,17 @@ export interface ProjectFilter {
 
 /**
  * Filter state structure used in the DataContext
+ * Uses a single consolidated filter array instead of separate arrays
  */
 export interface FilterState {
-  projectFilters: ProjectFilter[];
-  entityFilters: ProjectFilter[];
+  /** 
+   * Single array of all active filters
+   * Each filter has properties that indicate what it filters and how it should be applied
+   */
+  filters: ProjectFilter[];
+  
+  /** Sort options for the project list */
+  sortOptions: { field: string; direction: 'asc' | 'desc' };
 }
 
 /**

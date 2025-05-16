@@ -1,29 +1,51 @@
+/**
+ * MapView Component
+ * 
+ * A comprehensive map view component that displays projects, AHJs, and utilities on a Mapbox GL map.
+ * Provides interactive features like filtering, selection, and detailed views.
+ */
+
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import 'mapbox-gl/dist/mapbox-gl.css';
+
 // Import mapboxgl dynamically to prevent SSR issues
 let mapboxgl: any;
 if (typeof window !== 'undefined') {
   mapboxgl = require('mapbox-gl');
 }
+
+// Utility imports
 import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
 import { useData } from '@/contexts/DataContext';
 import { getClassificationMapColor, getClassificationBadgeClass } from '@/utils/classificationColors';
 import { getMapboxToken } from '@/utils/mapbox';
 import { mapQualificationStatus, isQualified } from '@/utils/qualificationStatus';
+
+// Component imports
 import ImprovedFilterPanel from './ImprovedFilterPanel';
 import ToggleOption from './ToggleOption';
 import EmptyState from './EmptyState';
 
+/**
+ * Component Interface
+ */
 interface MapViewProps {
   selectedProject: Project | null;
   onSelectProject?: (project: Project | null) => void;
 }
 
+/**
+ * MapView Component
+ */
 const MapView: React.FC<MapViewProps> = ({
   selectedProject,
   onSelectProject,
 }) => {
+  //==========================================================================
+  // DATA AND CONTEXT HOOKS
+  //==========================================================================
+  
   // Use DataContext for data and filters
   const { 
     projects, 
@@ -41,23 +63,27 @@ const MapView: React.FC<MapViewProps> = ({
     set45DayFilter
   } = useData();
   
-  // Log data received by MapView component
-  useEffect(() => {
-    // console.log('===== MAPVIEW COMPONENT DATA =====');
-    // console.log('Projects received:', projects.length);
-    // console.log('AHJs received:', ahjs.length);
-    // console.log('Utilities received:', utilities.length);
-    // console.log('Filters:', filters);
-    // console.log('===== END MAPVIEW COMPONENT DATA =====');
-  }, [projects, ahjs, utilities, filters]);
+  // Log the projects data from DataContext
+  // console.log('projects', projects);
   
+  // Auth context for user information
   const { userProfile, isAdmin } = useAuth();
   
-  // Map refs and state
+  //==========================================================================
+  // REFS
+  //==========================================================================
+  
+  // Map and marker refs
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
-  const markersRef = useRef<mapboxgl.Marker[]>([]);
-  const cardListRef = useRef<HTMLDivElement>(null);
+  const projectMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const ahjMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const utilityMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  // Removed cardListRef as we no longer need project cards
+  // console.log('markers', projectMarkersRef.current, ahjMarkersRef.current, utilityMarkersRef.current);
+  //==========================================================================
+  // STATE
+  //==========================================================================
   
   // Map position state
   const [lng, setLng] = useState(-111.8910); // Default to Utah
@@ -69,35 +95,61 @@ const MapView: React.FC<MapViewProps> = ({
   const [localSelectedProject, setLocalSelectedProject] = useState<Project | null>(selectedProject);
   const [visibleProjects, setVisibleProjects] = useState<Project[]>([]);
   
-  // UI interaction state
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  const [showLeftArrow, setShowLeftArrow] = useState(false);
-  const [showRightArrow, setShowRightArrow] = useState(false);
+  // Map interaction state
   const [mapMoved, setMapMoved] = useState(false);
   
-  // Flag to track if map movements should be allowed
+  // Map movement control flags
   const [allowMapMovement, setAllowMapMovement] = useState<{
     initial: boolean; // Allow initial map setup movement
     selection: boolean; // Allow movement when selecting a project
     utility: boolean; // Allow movement when selecting a utility
   }>({
     initial: true, // Allow initial setup
-    selection: true, // Allow project selection movement
-    utility: false // Don't move map for utility changes by default
+    selection: true, // Allow movement when selecting a project
+    utility: true, // Allow movement when selecting a utility
   });
 
-  // Store map state for view switching
-  const [savedMapState, setSavedMapState] = useState<{
-    center: [number, number];
-    zoom: number;
-    bearing: number;
-    pitch: number;
-  } | null>(null);
+  //==========================================================================
+  // UTILITY FUNCTIONS
+  //==========================================================================
+  
+  /**
+   * Handles project selection and updates both local state and parent component
+   */
+  const handleProjectSelect = useCallback((project: Project) => {
+    setLocalSelectedProject(project);
+    
+    if (onSelectProject) {
+      onSelectProject(project);
+    }
+  }, [onSelectProject]);
+  
+  /**
+   * Converts degrees to radians
+   */
+  const deg2rad = (deg: number): number => {
+    return deg * (Math.PI/180);
+  };
+  
+  /**
+   * Calculates distance between two points using Haversine formula
+   */
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const d = R * c; // Distance in km
+    return d;
+  };
 
-  // Helper function to create a GeoJSON circle
+  /**
+   * Creates a GeoJSON circle for radius visualization on the map
+   */
   const createGeoJSONCircle = (center: [number, number], radiusInMeters: number, options: { steps?: number, units?: 'meters' } = {}) => {
     const steps = options.steps || 64;
     const units = options.units || 'meters';
@@ -126,76 +178,41 @@ const MapView: React.FC<MapViewProps> = ({
     };
   };
 
-  // Calculate distance between two points using Haversine formula
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2); 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    const d = R * c; // Distance in km
-    return d;
-  };
+  //==========================================================================
+  // MAP INITIALIZATION
+  //==========================================================================
   
-  const deg2rad = (deg: number): number => {
-    return deg * (Math.PI/180);
-  };
-
-  // Effect to handle window resize events
+  /**
+   * Initialize map on component mount
+   * Sets up the Mapbox GL map with controls, event handlers, and initial view
+   */
   useEffect(() => {
-    const handleResize = () => {
-      try {
-        if (mapRef.current) {
-          mapRef.current.resize();
-        }
-      } catch (error) {
-        // Silent error handling for map resize
-      }
-    };
+    if (!mapContainer.current) return; // No container to render into
     
-    window.addEventListener('resize', handleResize);
-    
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
-  
-  // Effect to initialize map
-  useEffect(() => {
-    if (!mapContainer.current) return;
-    
-    // Clean up previous map instance if it exists
-    try {
-      if (mapRef.current) {
-        if (typeof mapRef.current.remove === 'function') {
-          mapRef.current.remove();
-        }
-      }
-    } catch (error) {
-      // Silent error handling for map cleanup
+    // Get Mapbox token
+    const token = getMapboxToken();
+    if (!token) {
+      console.error('No Mapbox token found');
+      return;
     }
     
-    mapRef.current = null;
+    // Set Mapbox token
+    mapboxgl.accessToken = token;
     
-    const initializeMap = async () => {
-      // Set Mapbox access token using the utility function
-      mapboxgl.accessToken = getMapboxToken();
-      
-      // Check if token is available
-      if (!mapboxgl.accessToken) {
-        // Cannot proceed without a Mapbox token
-        return;
-      }
-      
-      // Initialize the map
+    /**
+     * Initialize the map with configuration and event handlers
+     */
+    const initializeMap = () => {
+      // Create map instance
       const map = new mapboxgl.Map({
-        container: mapContainer.current as HTMLElement,
-        style: 'mapbox://styles/mapbox/dark-v11', // Updated to dark-v11 which has better layer support
-        center: [-95.7129, 37.0902], // Center of US
-        zoom: 3,
+        container: mapContainer.current!,
+        style: 'mapbox://styles/mapbox/dark-v11', // Dark theme
+        center: [lng, lat],
+        zoom: zoom,
+        maxBounds: [
+          [-180, -85], // Southwest coordinates
+          [180, 85]    // Northeast coordinates
+        ],
         projection: {
           name: 'mercator',
           center: [-95.7129, 37.0902]
@@ -220,7 +237,10 @@ const MapView: React.FC<MapViewProps> = ({
       
       map.addControl(geolocateControl, 'top-right');
       
-      // Set up event handlers
+      /**
+       * Map load event handler
+       * Sets up initial view and configurations once the map is loaded
+       */
       map.on('load', () => {
         setMapLoaded(true);
         
@@ -233,7 +253,10 @@ const MapView: React.FC<MapViewProps> = ({
           }
         }, 200);
         
-        // Try to get user location and find nearby projects
+        /**
+         * Find nearby projects and center the map view
+         * Uses user location and project coordinates to create an optimal view
+         */
         setTimeout(() => {
           try {
             // Get user's location from the map if available
@@ -255,8 +278,6 @@ const MapView: React.FC<MapViewProps> = ({
                 .slice(0, 5);
               
               if (projectsWithDistance.length === 0) return;
-              
-              // Process nearest projects
               
               // Create a bounds object to encompass all nearby projects and user location
               const bounds = new mapboxgl.LngLatBounds();
@@ -285,7 +306,10 @@ const MapView: React.FC<MapViewProps> = ({
           }
         }, 1000); // Short delay to ensure map is fully loaded
         
-        // Hide city labels until zoomed in
+        /**
+         * Zoom event handler
+         * Controls visibility of map labels based on zoom level
+         */
         map.on('zoom', () => {
           const zoom = map.getZoom();
           const showLabels = zoom >= 10;
@@ -306,12 +330,13 @@ const MapView: React.FC<MapViewProps> = ({
         });
       });
       
+      // Error handler
       map.on('error', (e: mapboxgl.ErrorEvent) => {
         // Handle map error silently
       });
-      
     };
     
+    // Initialize the map
     initializeMap();
     
     // Cleanup function
@@ -322,16 +347,22 @@ const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
-  // Update visible projects based on map bounds
+  //==========================================================================
+  // PROJECT VISIBILITY AND FILTERING
+  //==========================================================================
+  
+  /**
+   * Updates the list of visible projects based on current map bounds
+   * Filters projects from DataContext to only show those within the visible map area
+   */
   const updateVisibleProjects = useCallback((currentMap: mapboxgl.Map) => {
     if (!currentMap || !projects || projects.length === 0) {
-      // Map or projects not available
       return;
     }
 
+    // Get current map bounds
     const bounds = currentMap.getBounds();
     if (!bounds) {
-      // Map bounds not available
       return;
     }
 
@@ -345,123 +376,321 @@ const MapView: React.FC<MapViewProps> = ({
       return isInBounds;
     });
 
-    // Update visible projects
+    // Update visible projects state
     setVisibleProjects(visible);
   }, [projects]);
 
-  // Update visible projects when projects changes
+  /**
+   * Update visible projects when the filtered projects list changes
+   * Only runs when projects or mapLoaded changes, not when updateVisibleProjects changes
+   */
   useEffect(() => {
     if (!mapRef.current || !mapLoaded || !projects) return;
     updateVisibleProjects(mapRef.current);
-  }, [projects, mapLoaded, updateVisibleProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, mapLoaded]);
 
-  // Update visible projects whenever map moves or projects change
+  /**
+   * Update visible projects once when the map loads
+   * No longer updates on map movement to improve performance
+   */
   useEffect(() => {
     if (!mapRef.current || !projects || projects.length === 0 || !mapLoaded) return;
     
     const map = mapRef.current;
     
-    // Add event listeners for map movement
+    // Only track that the map has moved, but don't update visible projects
     const moveEndHandler = () => {
       setMapMoved(true);
-      updateVisibleProjects(map);
+      // No longer calling updateVisibleProjects on every map move
     };
     
     map.on('moveend', moveEndHandler);
     
-    // Initial update
-    updateVisibleProjects(map);
+    // Set all projects as visible initially instead of filtering by bounds
+    setVisibleProjects(projects);
+    // console.log('Setting all projects as visible:', projects.length);
     
     // Cleanup
     return () => {
       map.off('moveend', moveEndHandler);
     };
-  }, [mapLoaded, projects, updateVisibleProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, projects]);
 
-  // Update markers when visible projects change
-  useEffect(() => {
-    if (!mapRef.current || !mapLoaded) return;
+  //==========================================================================
+  // MARKER CREATION AND MANAGEMENT
+  //==========================================================================
+  
+  /**
+   * Creates entity markers (AHJs and Utilities) with pulsing effect
+   * Only shows entities that are selected or related to selected entities
+   */
+  const createEntityMarkers = useCallback((entities: any[], entityType: 'ahj' | 'utility', map: mapboxgl.Map) => {
+    // Clear existing markers for this entity type
+    const markersArray = entityType === 'ahj' ? ahjMarkersRef : utilityMarkersRef;
+    markersArray.current.forEach(marker => marker.remove());
+    markersArray.current = [];
     
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.remove());
-    markersRef.current = [];
+    // Filter entities to those with valid coordinates
+    const validEntities = entities.filter(entity => {
+      return entity.latitude && entity.longitude;
+    });
     
-    const map = mapRef.current;
+    // Check if we have any entity filters
+    const entityFilters = filters.filters.filter(f => f.type === 'ahj' || f.type === 'utility');
+    const hasEntityFilters = entityFilters.length > 0;
     
-    // Add new markers for each visible project
-    visibleProjects.forEach(project => {
-      if (!project.latitude || !project.longitude) return;
-      
-      // Determine if this project should be masked
-      const isComplete = project.status && 
-        (project.status.toLowerCase() === 'complete' || 
-         project.status.toLowerCase() === 'completed' ||
-         project.status.toLowerCase().includes('complete'));
-      
-      const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
-      // We don't have admin users right now, so we're simplifying the masking logic
-      const shouldMask = !(isComplete || isAssignedToCurrentUser);
-      
-      // Skip adding exact location for masked projects to protect sensitive information
-      if (shouldMask) {
-        // For masked projects, we could either:
-        // 1. Not show them at all
-        // 2. Show them with a different icon
-        // 3. Show them with a slight location offset
-        // 4. Only show them at certain zoom levels
+    // Find selected entities of this type
+    const selectedEntityIds = entityFilters
+      .filter(filter => filter.type === entityType)
+      .map(filter => filter.entityId);
+    
+    // Find related entities (entities related to a selected entity of the other type)
+    const otherEntityType = entityType === 'ahj' ? 'utility' : 'ahj';
+    const selectedOtherEntityIds = entityFilters
+      .filter(filter => filter.type === otherEntityType)
+      .map(filter => filter.entityId);
+    
+    // Determine which entities to show based on selection status
+    let entitiesToShow: any[] = [];
+    
+    // If we have entity filters, only show selected and related entities
+    if (hasEntityFilters) {
+      entitiesToShow = validEntities.filter(entity => {
+        // Show if this entity is selected
+        if (selectedEntityIds.includes(entity.id)) {
+          return true;
+        }
         
-        // For now, we'll use approach #2 - show with a different icon
-        const el = document.createElement('div');
-        el.className = 'masked-marker';
-        el.style.backgroundImage = `url(/pin_grey.svg)`;
+        // Show if this entity is related to a selected entity of the other type
+        if (selectedOtherEntityIds.length > 0) {
+          // For AHJs, check if it's related to any selected utility
+          if (entityType === 'ahj' && entity.relatedUtilityIds) {
+            return entity.relatedUtilityIds.some((id: string) => selectedOtherEntityIds.includes(id));
+          }
+          
+          // For Utilities, check if it's related to any selected AHJ
+          if (entityType === 'utility' && entity.relatedAhjIds) {
+            return entity.relatedAhjIds.some((id: string) => selectedOtherEntityIds.includes(id));
+          }
+        }
+        
+        return false;
+      });
+    }
+    
+    // Create pulsing effect for each entity that should be shown
+    entitiesToShow.forEach(entity => {
+      // Determine color based on entity type
+      const pulseColor = entityType === 'ahj' ? '#87CEFA' : '#FFFF00'; // Light blue for AHJs, yellow for utilities
+      
+      // Create a pulsing dot element
+      const el = document.createElement('div');
+      el.className = `${entityType}-pulse-marker`;
+      el.style.width = '20px';
+      el.style.height = '20px';
+      
+      // Highlight selected entities with a larger marker
+      if (selectedEntityIds.includes(entity.id)) {
         el.style.width = '24px';
         el.style.height = '24px';
-        el.style.backgroundSize = '100%';
-        el.style.opacity = '0.6'; // Make it semi-transparent
-        
-        const marker = new mapboxgl.Marker(el)
-          .setLngLat([project.longitude, project.latitude])
-          .addTo(map);
-        
-        marker.getElement().addEventListener('click', () => {
-          handleProjectSelect(project);
-        });
-        
-        markersRef.current.push(marker);
-        return;
+        el.style.border = '2px solid white';
       }
       
-      // For unmasked projects, show normal markers with classification colors
-      const classification = project.ahj?.classification || 'unknown';
-      const pinColor = getClassificationMapColor(classification);
+      // Add tooltip with entity name
+      el.title = entity.name;
       
-      const el = document.createElement('div');
-      el.className = 'marker';
-      el.style.backgroundImage = `url(/pin_${pinColor}.svg)`;
-      el.style.width = '24px';
-      el.style.height = '24px';
-      el.style.backgroundSize = '100%';
+      // Create a popup for the entity
+      const popup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 25
+      }).setHTML(`<div class="p-2 bg-gray-800 rounded shadow-lg">
+        <div class="font-medium text-white">${entity.name}</div>
+        <div class="text-xs text-gray-300">${entityType.toUpperCase()}</div>
+      </div>`);
       
-      // Highlight selected project
-      if (selectedProject && project.id === selectedProject.id) {
-        el.style.width = '32px';
-        el.style.height = '32px';
-        el.style.zIndex = '10';
-      }
-      
+      // Create and add marker to map
       const marker = new mapboxgl.Marker(el)
-        .setLngLat([project.longitude, project.latitude])
+        .setLngLat([entity.longitude, entity.latitude])
+        .setPopup(popup)
+        .addTo(map);
+      
+      // Add hover events for popup
+      el.addEventListener('mouseenter', () => {
+        popup.addTo(map);
+      });
+      
+      el.addEventListener('mouseleave', () => {
+        popup.remove();
+      });
+      
+      // Add click handler to select the entity
+      el.addEventListener('click', () => {
+        // Create a filter for this entity
+        const filter = {
+          type: entityType,
+          value: entity.name,
+          entityId: entity.id,
+          filterSource: 'map-selection' as 'manual' | 'entity-selection' | 'search',
+          entityType: entityType
+        };
+        
+        // Add the filter
+        addFilter(filter);
+      });
+      
+      // Store marker reference
+      markersArray.current.push(marker);
+    });
+  }, [addFilter, filters.filters]);
+
+  /**
+   * Creates a masked project pin with reduced visibility
+   * Used for projects that should have their exact location partially obscured
+   */
+  const createMaskedProjectPin = (project: Project, map: mapboxgl.Map) => {
+    // console.log('Creating MASKED pin for project:', project.id, project.address);
+    
+    // For masked projects, use a grey pin with reduced opacity
+    const el = document.createElement('div');
+    el.className = 'masked-marker';
+    el.style.backgroundImage = 'url(/pin_grey.svg)';
+    el.style.width = '28px'; // Slightly smaller than active projects
+    el.style.height = '28px';
+    el.style.backgroundSize = 'contain';
+    el.style.backgroundRepeat = 'no-repeat';
+    el.style.backgroundPosition = 'center';
+    el.style.opacity = '0.4'; // More transparent for masked projects
+    el.style.zIndex = '5'; // Below active projects
+    
+    try {
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([project.longitude!, project.latitude!])
         .addTo(map);
       
       marker.getElement().addEventListener('click', () => {
         handleProjectSelect(project);
       });
       
-      markersRef.current.push(marker);
-    });
-  }, [visibleProjects, selectedProject, mapLoaded, userProfile]);
+      projectMarkersRef.current.push(marker);
+      // console.log('Successfully added masked marker to map, total markers:', projectMarkersRef.current.length);
+    } catch (error) {
+      console.error('Error creating masked marker:', error);
+    }
+  };
+  
+  /**
+   * Creates a standard project pin with full visibility
+   * Used for completed projects or those assigned to the current user
+   */
+  const createStandardProjectPin = (project: Project, map: mapboxgl.Map) => {
+    // console.log('Creating STANDARD pin for project:', project.id, project.address);
+    
+    // For unmasked projects, use pin_green_active.svg
+    const el = document.createElement('div');
+    el.className = 'marker';
+    el.style.backgroundImage = 'url(/pin_green_active.svg)';
+    el.style.width = '32px';
+    el.style.height = '32px';
+    el.style.backgroundSize = 'contain';
+    el.style.backgroundRepeat = 'no-repeat';
+    el.style.backgroundPosition = 'center';
+    el.style.zIndex = '10'; // Ensure project pins are above entity markers
+    
+    // Highlight selected project
+    if (selectedProject && project.id === selectedProject.id) {
+      el.style.width = '36px';
+      el.style.height = '36px';
+      el.style.border = '2px solid white';
+    }
+    
+    try {
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([project.longitude!, project.latitude!])
+        .addTo(map);
+      
+      marker.getElement().addEventListener('click', () => {
+        handleProjectSelect(project);
+      });
+      
+      projectMarkersRef.current.push(marker);
+      // console.log('Successfully added standard marker to map, total markers:', projectMarkersRef.current.length);
+    } catch (error) {
+      console.error('Error creating standard marker:', error);
+    }
+  };
 
-  // Update local selected project when prop changes
+  /**
+   * Updates all map markers when projects data changes
+   * Recreates markers when filters are applied
+   */
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    const map = mapRef.current;
+    // console.log('Map markers update triggered, projects:', projects.length);
+    
+    // Clear existing project markers whenever projects change
+    projectMarkersRef.current.forEach(marker => marker.remove());
+    projectMarkersRef.current = [];
+    
+    // Create entity markers for AHJs and utilities
+    // Only recreate these if they don't exist yet
+    if (ahjMarkersRef.current.length === 0) {
+      createEntityMarkers(ahjs, 'ahj', map);
+    }
+    
+    if (utilityMarkersRef.current.length === 0) {
+      createEntityMarkers(utilities, 'utility', map);
+    }
+    
+    // Use all projects instead of just visible ones
+    const projectsToShow = projects;
+    // console.log('Projects to show after filtering:', projectsToShow.length);
+    
+    // Check if any projects have coordinates
+    const projectsWithCoords = projectsToShow.filter(p => p.latitude && p.longitude);
+    // console.log('Projects with coordinates:', projectsWithCoords.length);
+    
+    // Add new markers for each project
+    projectsToShow.forEach(project => {
+      // Skip projects without valid coordinates
+      if (!project.latitude || !project.longitude) {
+        return;
+      }
+      
+      // Determine if this project should be masked based on completion status and ownership
+      const isComplete = project.status && 
+        (project.status.toLowerCase() === 'complete' || 
+         project.status.toLowerCase() === 'completed' ||
+         project.status.toLowerCase().includes('complete'));
+      
+      const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
+      const shouldMask = !(isComplete || isAssignedToCurrentUser);
+      
+      if (shouldMask) {
+        // Create masked project pin (reduced visibility for privacy)
+        createMaskedProjectPin(project, map);
+      } else {
+        // Create standard project pin
+        createStandardProjectPin(project, map);
+      }
+    });
+    
+    // console.log('Finished creating/updating all markers, total:', projectMarkersRef.current.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, projects]);
+
+  //==========================================================================
+  // PROJECT SELECTION AND INTERACTION
+  //==========================================================================
+
+  /**
+   * Update local selected project when prop changes
+   * Flies to the selected project on the map
+   */
   useEffect(() => {
     setLocalSelectedProject(selectedProject);
     
@@ -479,277 +708,93 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [selectedProject, mapLoaded, allowMapMovement.selection]);
 
-
-
-  // Handle project selection
-  const handleProjectSelect = (project: Project) => {
-    setLocalSelectedProject(project);
-    
-    if (onSelectProject) {
-      onSelectProject(project);
-    }
-  };
-
-  // Handle filter addition
+  /**
+   * Handle filter addition
+   */
   const handleAddFilter = (filter: ProjectFilter) => {
     addFilter(filter);
   };
   
-  // Handle filter removal
-  const handleRemoveFilter = (filter: ProjectFilter) => {
-    removeFilter(filter.id || '');
+  /**
+   * Handle filter removal
+   */
+  const handleRemoveFilter = (filterId: string) => {
+    removeFilter(filterId);
   };
 
-  // Handle "My Projects" toggle
+  /**
+   * Handle "My Projects" toggle
+   */
   const handleMyProjectsToggle = () => {
     toggleShowOnlyMyProjects();
   };
 
-  // Handle 45-day qualified projects toggle
-  const handle45DayToggle = () => {
-    set45DayFilter(!show45DayQualified);
-  };
-
-  // Mouse event handlers for card carousel
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!cardListRef.current) return;
-    
-    setIsDragging(true);
-    setStartX(e.pageX - cardListRef.current.offsetLeft);
-    setScrollLeft(cardListRef.current.scrollLeft);
-  };
+  /**
+   * Handle 45-day qualified projects toggle
+   * Check if we have data to display
+   */
+  const hasData = projects.length > 0;
   
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-  
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !cardListRef.current) return;
-    
-    e.preventDefault();
-    const x = e.pageX - cardListRef.current.offsetLeft;
-    const walk = (x - startX) * 2; // Scroll speed multiplier
-    cardListRef.current.scrollLeft = scrollLeft - walk;
-  };
-  
-  const handleMouseLeave = () => {
-    setIsDragging(false);
-  };
-
-  // Check if arrows should be shown for card carousel
-  useEffect(() => {
-    if (!cardListRef.current) return;
-    
-    const checkArrows = () => {
-      const container = cardListRef.current;
-      if (!container) return;
-      
-      setShowLeftArrow(container.scrollLeft > 0);
-      setShowRightArrow(container.scrollLeft < container.scrollWidth - container.clientWidth);
-    };
-    
-    const container = cardListRef.current;
-    container.addEventListener('scroll', checkArrows);
-    window.addEventListener('resize', checkArrows);
-    
-    // Initial check
-    checkArrows();
-    
-    return () => {
-      container.removeEventListener('scroll', checkArrows);
-      window.removeEventListener('resize', checkArrows);
-    };
-  }, [visibleProjects]);
-
-  // Scroll card carousel left/right
-  const scrollCarousel = (direction: 'left' | 'right') => {
-    if (!cardListRef.current) return;
-    
-    const container = cardListRef.current;
-    const scrollAmount = container.clientWidth * 0.8; // Scroll 80% of visible width
-    
-    if (direction === 'left') {
-      container.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
-    } else {
-      container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
-    }
-  };
-
-  // Memoize visible projects to prevent unnecessary re-renders
-  const sortedVisibleProjects = useMemo(() => {
-    return [...visibleProjects].sort((a, b) => {
-      // First, prioritize unmasked projects over masked ones
-      const aIsComplete = a.status && 
-        (a.status.toLowerCase() === 'complete' || 
-         a.status.toLowerCase() === 'completed' ||
-         a.status.toLowerCase().includes('complete'));
-      
-      const bIsComplete = b.status && 
-        (b.status.toLowerCase() === 'complete' || 
-         b.status.toLowerCase() === 'completed' ||
-         b.status.toLowerCase().includes('complete'));
-      
-      const aIsAssignedToCurrentUser = a.rep_id === userProfile?.rep_id;
-      const bIsAssignedToCurrentUser = b.rep_id === userProfile?.rep_id;
-      
-      const aIsMasked = !(aIsComplete || aIsAssignedToCurrentUser);
-      const bIsMasked = !(bIsComplete || bIsAssignedToCurrentUser);
-      
-      if (!aIsMasked && bIsMasked) return -1;
-      if (aIsMasked && !bIsMasked) return 1;
-      
-      // Within each group (masked or unmasked), prioritize user's own projects
-      if (aIsAssignedToCurrentUser && !bIsAssignedToCurrentUser) return -1;
-      if (!aIsAssignedToCurrentUser && bIsAssignedToCurrentUser) return 1;
-      
-      // Then sort by 45-day qualification
-      const aIs45Day = isQualified(a);
-      const bIs45Day = isQualified(b);
-      
-      if (aIs45Day && !bIs45Day) return -1;
-      if (!aIs45Day && bIs45Day) return 1;
-      // Finally sort alphabetically by name or id if name is not available
-      return (a.address || a.id || '').localeCompare(b.address || b.id || '');
-    });
-  }, [visibleProjects, userProfile]);
-
-  // Render project cards for the carousel
-  const renderProjectCards = () => {
-    if (sortedVisibleProjects.length === 0) {
-      return (
-        <div className="flex items-center justify-center h-full w-full p-4">
-          <EmptyState 
-            title="No projects in this area" 
-            message="Try zooming out or panning to see more projects."
-            icon="map"
-          />
+  /**
+   * Render loading state
+   */
+  if (isLoading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-900">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-lg text-gray-300">Loading map data...</p>
         </div>
-      );
-    }
-    
-    return sortedVisibleProjects.map((project, index) => {
-      // Determine if this project should be masked
-      const isComplete = project.status && 
-        (project.status.toLowerCase() === 'complete' || 
-         project.status.toLowerCase() === 'completed' ||
-         project.status.toLowerCase().includes('complete'));
-      
-      const isAssignedToCurrentUser = project.rep_id === userProfile?.rep_id;
-      // We don't have admin users right now, so we're simplifying the masking logic
-      const isMasked = !(isComplete || isAssignedToCurrentUser);
-      
-      // Get AHJ classification for color
-      const classification = project.ahj?.classification || 'unknown';
-      const badgeClass = getClassificationBadgeClass(classification);
-      
-      return (
-        <div 
-          key={project.id} 
-          className={`
-            flex-shrink-0 w-80 p-4 rounded-lg shadow-md m-2 cursor-pointer
-            ${selectedProject?.id === project.id ? 'bg-gray-800 border border-blue-500' : 'bg-gray-900'}
-            transition-all duration-200 hover:bg-gray-800
-          `}
-          onClick={() => handleProjectSelect(project)}
-        >
-          <div className="flex justify-between items-start mb-2">
-            <h3 className="text-lg font-semibold text-white truncate">
-              {isMasked ? 'Project details restricted' : (project.address || 'Unnamed Project')}
-            </h3>
-            <div className={`px-2 py-1 rounded text-xs font-medium ${badgeClass}`}>
-              {classification.toUpperCase()}
-            </div>
-          </div>
-          
-          <div className="text-sm text-gray-300 mb-1">
-            <span className="font-medium">Status:</span> {isMasked ? 'Restricted' : project.status || 'Unknown'}
-          </div>
-          
-          <div className="text-sm text-gray-300 mb-1">
-            <span className="font-medium">Address:</span> {isMasked ? 'Project details restricted' : project.address || 'No address'}
-          </div>
-          
-          {!isMasked && (
-            <>
-              <div className="text-sm text-gray-300 mb-1">
-                <span className="font-medium">AHJ:</span> {project.ahj?.name || 'Unknown'}
-              </div>
-              
-              <div className="text-sm text-gray-300 mb-1">
-                <span className="font-medium">Utility:</span> {project.utility?.name || 'Unknown'}
-              </div>
-              
-              <div className="text-sm text-gray-300">
-                <span className="font-medium">45-Day Qualified:</span> {isQualified(project) ? 'Yes' : 'No'}
-              </div>
-            </>
-          )}
-        </div>
-      );
-    });
-  };
-
-  // Render the main component
-  return (
-    <div className="h-full w-full flex flex-col relative">
-      {/* Map container */}
-      <div 
-        ref={mapContainer} 
-        className="flex-grow w-full"
-        style={{ height: 'calc(100% - 120px)' }}
-      />
-      
-      {/* Project cards carousel */}
-      <div className="h-32 w-full bg-gray-900 relative">
-        {/* Left scroll arrow */}
-        {showLeftArrow && (
-          <button
-            className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-gray-900 to-transparent z-10 px-2"
-            onClick={() => scrollCarousel('left')}
-          >
-            ←
-          </button>
-        )}
-        
-        {/* Cards container */}
-        <div
-          ref={cardListRef}
-          className="flex overflow-x-auto h-full py-2 px-4 hide-scrollbar"
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-        >
-          {renderProjectCards()}
-        </div>
-        
-        {/* Right scroll arrow */}
-        {showRightArrow && (
-          <button
-            className="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-gray-900 to-transparent z-10 px-2"
-            onClick={() => scrollCarousel('right')}
-          >
-            →
-          </button>
-        )}
       </div>
-      
-      {/* Loading indicator */}
-      {isLoading && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="text-white">Loading projects...</div>
+    );
+  }
+  
+  /**
+   * Render error state
+   */
+  if (error) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-900">
+        <div className="text-center max-w-md p-6">
+          <div className="text-red-500 text-5xl mb-4">⚠️</div>
+          <h3 className="text-xl font-bold text-red-400 mb-2">Error Loading Map</h3>
+          <p className="text-gray-300 mb-4">{error}</p>
+          <button 
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
         </div>
-      )}
-      
-      {/* Error message */}
-      {error && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-red-900 text-white p-4 rounded-lg max-w-md">
-            <h3 className="text-lg font-bold mb-2">Error</h3>
-            <p>{error}</p>
-          </div>
-        </div>
-      )}
+      </div>
+    );
+  }
+  
+  /**
+   * Render empty state
+   */
+  if (!hasData) {
+    return (
+      <EmptyState 
+        title="No Projects Found"
+        message="There are no projects matching your current filters."
+        icon={<span className="text-4xl mb-3 mx-auto">🗺️</span>}
+        isFilterResult={true}
+        onClearFilter={clearFilters}
+      />
+    );
+  }
+
+  /**
+   * Render the map
+   */
+  return (
+    <div className="w-full h-full flex flex-col">
+      {/* Map container */}
+      <div className="flex-1 relative">
+        <div ref={mapContainer} className="absolute inset-0" />
+        {/* Project cards carousel removed */}
+      </div>
     </div>
   );
 };
