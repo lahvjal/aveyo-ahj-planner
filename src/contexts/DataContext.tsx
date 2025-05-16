@@ -671,7 +671,112 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       }
       
-      // Keep the rest of the cross-entity filtering logic as is, just updating references to filters.entityFilters to filters.filters where appropriate
+      // Apply cross-entity filtering if we have a selected utility
+      // When a utility is selected, only show AHJs that have projects with that utility
+      if (hasSelectedUtility && selectedUtilityFilter?.entityId) {
+        const utilityId = selectedUtilityFilter.entityId; // Store in variable to avoid TypeScript errors
+        
+        // Find all projects that have the selected utility
+        // Access the utility ID directly from the utility_company_item_id property
+        const projectsWithSelectedUtility = filteredProjects.filter(p => {
+          // Get the ID from the direct property
+          const projectUtilityId = p.utility_company_item_id;
+          
+          // Compare as strings to handle type differences
+          return projectUtilityId && projectUtilityId.toString() === utilityId.toString();
+        });
+        
+        // Check if any projects match the selected utility ID
+        const matchingProjects = filteredProjects.filter(p => p.utility?.id === selectedUtilityFilter.entityId);
+        
+        // Get the AHJ IDs from those projects using the direct ahj_item_id property
+        const relatedAhjIds = new Set(
+          projectsWithSelectedUtility
+            .map(p => p.ahj_item_id ? p.ahj_item_id.toString() : null)
+            .filter(Boolean)
+        );
+        
+        // Filter AHJs to only those related to the selected utility
+        // Use string comparison for consistent matching
+        filteredAhjs = filteredAhjs.filter(ahj => 
+          ahj.id && relatedAhjIds.has(ahj.id.toString())
+        );
+      }
+      
+      // Apply Utility filters if any exist
+      if (utilityFilters.length > 0) {
+        
+        // Count before filtering
+        const beforeCount = processedEntities.utilities.length;
+        
+        // If we have Utility filters, only show Utilities that match those filters
+        filteredUtilities = processedEntities.utilities.filter(utility => {
+          return utilityFilters.some(filter => {
+            // For entity filters, we typically filter by ID
+            if (filter.entityId) {
+              const matches = utility.id === filter.entityId;
+              return matches;
+            }
+            
+            // For classification filters (A, B, C)
+            if (filter.value === 'A' || filter.value === 'B' || filter.value === 'C') {
+              const matches = utility.classification === filter.value;
+              return matches;
+            }
+            
+            // For search filters, we search by name
+            const matches = utility.name.toLowerCase().includes(filter.value.toLowerCase());
+            return matches;
+          });
+        });
+      }
+      
+      // Apply cross-entity filtering if we have a selected AHJ
+      // When an AHJ is selected, only show Utilities that have projects with that AHJ
+      if (hasSelectedAhj && selectedAhjFilter?.entityId) {
+        const ahjId = selectedAhjFilter.entityId; // Store in variable to avoid TypeScript errors
+        
+        // Check if any projects match the selected AHJ ID using string comparison
+        const matchingProjects = filteredProjects.filter(p => 
+          p.ahj?.id && p.ahj.id.toString() === ahjId.toString()
+        );
+        
+        // Try a different approach to find projects with the selected AHJ
+        // Log the raw project data to see all available fields
+        if (filteredProjects.length > 0) {
+          const firstProject = filteredProjects[0];
+          console.log('COMPLETE PROJECT DEBUG (AHJ):', {
+            fullProject: firstProject,
+            // Check if there are any fields that might contain the AHJ ID
+            ahjRelatedFields: Object.keys(firstProject).filter(key => 
+              key.toLowerCase().includes('ahj') || key.toLowerCase().includes('authority')
+            )
+          });
+        }
+        
+        // Find all projects that have the selected AHJ
+        // Access the AHJ ID directly from the ahj_item_id property
+        const projectsWithSelectedAhj = filteredProjects.filter(p => {
+          // Get the ID from the direct property
+          const projectAhjId = p.ahj_item_id;
+          
+          // Compare as strings to handle type differences
+          return projectAhjId && projectAhjId.toString() === ahjId.toString();
+        });
+        
+        // Get the Utility IDs from those projects using the direct utility_company_item_id property
+        const relatedUtilityIds = new Set(
+          projectsWithSelectedAhj
+            .map(p => p.utility_company_item_id ? p.utility_company_item_id.toString() : null)
+            .filter(Boolean)
+        );
+        
+        // Filter Utilities to only those related to the selected AHJ
+        // Use string comparison for consistent matching
+        filteredUtilities = filteredUtilities.filter(utility => 
+          utility.id && relatedUtilityIds.has(utility.id.toString())
+        );
+      }
     }
 
     // 5. Apply sorting to projects
