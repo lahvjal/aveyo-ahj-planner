@@ -33,40 +33,96 @@
   scrollbar-color: #333333 #1e1e1e;
 }
 
-/* Pulsing animation for entity markers */
-@keyframes pulse {
+/* Ping ripple effect for entity markers */
+@keyframes ping-ripple {
   0% {
-    transform: scale(0.8);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
-    opacity: 0.8;
-  }
-  70% {
-    transform: scale(1.2);
-    box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
-    opacity: 0.6;
+    height: 15px;
+    width: 15px;
+    border-width: 1px;
+    opacity: 1;
   }
   100% {
-    transform: scale(0.8);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-    opacity: 0.8;
+    height: 100px;
+    width: 100px;
+    border-width: 0px;
+    opacity: 0;
   }
 }
 
-/* Specific styling for AHJ and utility markers */
-.ahj-pulse-marker {
-  box-shadow: 0 0 0 rgba(135, 206, 250, 0.6);
-  animation: pulse 1.5s infinite;
-  background-color: #87CEFA; /* Light blue */
+@keyframes ping-ripple-big {
+  0% {
+    height: 45px;
+    width: 45px;
+    border-width: 2px;
+    opacity: 1;
+  }
+  100% {
+    height: 300px;
+    width: 300px;
+    border-width: 0px;
+    opacity: 0;
+  }
+}
+
+/* Base styles for entity markers */
+.entity-marker-base {
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
   z-index: 5;
 }
 
-.utility-pulse-marker {
-  box-shadow: 0 0 0 rgba(255, 255, 0, 0.6);
-  animation: pulse 1.5s infinite;
-  background-color: #FFFF00; /* Yellow */
+/* AHJ marker styles */
+.ahj-pulse-marker {
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 5;
+  background-color: rgba(135, 206, 250, 0.5);
+}
+
+/* .ahj-pulse-marker::before, */
+.ahj-pulse-marker::after {
+  content: '';
+  flex: none;
+  border-radius: 50%;
+  border: solid 1px rgba(135, 206, 250, 1);
+  z-index: -1;
+}
+
+.ahj-pulse-marker::after {
+  animation: ping-ripple 5s infinite;
+}
+
+/* .ahj-pulse-marker::after {
+  animation: ping-ripple 4s infinite 2s; 
+} */
+
+/* Utility marker styles */
+.utility-pulse-marker {
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  background-color: rgba(255, 239, 16, 0.5);
+}
+
+.utility-pulse-marker::after {
+  content: '';
+  flex: none;
+  border-radius: 50%;
+  border: solid 1px rgba(255, 239, 16, 1);
+  z-index: -1;
+}
+
+.utility-pulse-marker::after {
+  animation: ping-ripple-big 3s infinite;
 }
 
 :root {
@@ -194,7 +250,8 @@
   --orange-100: #ffedd5;
 }
 
-@theme inline {
+/* Theme variables */
+:root {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);

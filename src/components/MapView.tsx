@@ -484,17 +484,17 @@ const MapView: React.FC<MapViewProps> = ({
       // Determine color based on entity type
       const pulseColor = entityType === 'ahj' ? '#87CEFA' : '#FFFF00'; // Light blue for AHJs, yellow for utilities
       
-      // Create a pulsing dot element
+      // Create a ping ripple element
       const el = document.createElement('div');
       el.className = `${entityType}-pulse-marker`;
-      el.style.width = '20px';
-      el.style.height = '20px';
       
-      // Highlight selected entities with a larger marker
+      // Don't override the CSS size here since we're using the CSS classes
+      // The ping ripple effect is controlled by the CSS
+      
+      // Highlight selected entities
       if (selectedEntityIds.includes(entity.id)) {
-        el.style.width = '24px';
-        el.style.height = '24px';
         el.style.border = '2px solid white';
+        el.style.zIndex = '6'; // Make selected entities appear above others
       }
       
       // Add tooltip with entity name
@@ -591,8 +591,8 @@ const MapView: React.FC<MapViewProps> = ({
     const el = document.createElement('div');
     el.className = 'marker';
     el.style.backgroundImage = 'url(/pin_grey_active.svg)';
-    el.style.width = '18px';
-    el.style.height = '18px';
+    el.style.width = '25px';
+    el.style.height = '25px';
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
