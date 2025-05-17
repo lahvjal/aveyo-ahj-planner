@@ -5,7 +5,7 @@
  * Provides interactive features like filtering, selection, and detailed views.
  */
 
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 // Import mapboxgl dynamically to prevent SSR issues
@@ -13,7 +13,6 @@ let mapboxgl: any;
 if (typeof window !== 'undefined') {
   mapboxgl = require('mapbox-gl');
 }
-
 // Utility imports
 import { Project, ProjectFilter } from '@/utils/types';
 import { useAuth } from '@/utils/AuthContext';
@@ -557,28 +556,28 @@ const MapView: React.FC<MapViewProps> = ({
     const el = document.createElement('div');
     el.className = 'masked-marker';
     el.style.backgroundImage = 'url(/pin_grey.svg)';
-    el.style.width = '28px'; // Slightly smaller than active projects
-    el.style.height = '28px';
+    el.style.width = '18px'; // Slightly smaller than active projects
+    el.style.height = '18px';
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
-    el.style.opacity = '0.4'; // More transparent for masked projects
+    el.style.opacity = '0'; // More transparent for masked projects
     el.style.zIndex = '5'; // Below active projects
     
-    try {
-      const marker = new mapboxgl.Marker(el)
-        .setLngLat([project.longitude!, project.latitude!])
-        .addTo(map);
+    // try {
+    //   const marker = new mapboxgl.Marker(el)
+    //     .setLngLat([project.longitude!, project.latitude!])
+    //     .addTo(map);
       
-      marker.getElement().addEventListener('click', () => {
-        handleProjectSelect(project);
-      });
+    //   marker.getElement().addEventListener('click', () => {
+    //     handleProjectSelect(project);
+    //   });
       
-      projectMarkersRef.current.push(marker);
-      // console.log('Successfully added masked marker to map, total markers:', projectMarkersRef.current.length);
-    } catch (error) {
-      console.error('Error creating masked marker:', error);
-    }
+    //   projectMarkersRef.current.push(marker);
+    //   // console.log('Successfully added masked marker to map, total markers:', projectMarkersRef.current.length);
+    // } catch (error) {
+    //   console.error('Error creating masked marker:', error);
+    // }
   };
   
   /**
@@ -591,9 +590,9 @@ const MapView: React.FC<MapViewProps> = ({
     // For unmasked projects, use pin_green_active.svg
     const el = document.createElement('div');
     el.className = 'marker';
-    el.style.backgroundImage = 'url(/pin_green_active.svg)';
-    el.style.width = '32px';
-    el.style.height = '32px';
+    el.style.backgroundImage = 'url(/pin_grey_active.svg)';
+    el.style.width = '18px';
+    el.style.height = '18px';
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';

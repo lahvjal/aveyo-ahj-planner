@@ -450,6 +450,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     });
     
+    // Create maps of AHJs and utilities by ID for efficient lookup
+    const ahjMap = Object.fromEntries(
+      processedEntities.ahjs.map(ahj => [ahj.id, ahj])
+    );
+    
+    const utilityMap = Object.fromEntries(
+      processedEntities.utilities.map(utility => [utility.id, utility])
+    );
+    
+    // Attach AHJ and utility objects to each project
+    filteredProjects = filteredProjects.map(project => {
+      const ahjId = project.ahj_item_id;
+      const utilityId = project.utility_company_item_id;
+      
+      return {
+        ...project,
+        ahj: ahjId ? ahjMap[ahjId] || null : null,
+        utility: utilityId ? utilityMap[utilityId] || null : null
+      };
+    });
+    
+    // Log a sample project to verify the structure
+    if (filteredProjects.length > 0) {
+      console.log('Sample project with attached entities:', {
+        projectId: filteredProjects[0].id,
+        ahjId: filteredProjects[0].ahj_item_id,
+        attachedAhj: filteredProjects[0].ahj,
+        utilityId: filteredProjects[0].utility_company_item_id,
+        attachedUtility: filteredProjects[0].utility
+      });
+    }
+    
     // Log how many projects have coordinates now
     console.log('Filters:', filters);
     // 1. Apply all filters to projects
@@ -470,19 +502,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           });
           break;
         case 'ahj':
-          filteredProjects = filteredProjects.filter(project =>
-            project.ahj?.id === filter.value || project.ahj_item_id === filter.entityId
-          );
+          filteredProjects = filteredProjects.filter(project => {
+            // If we're filtering by classification (A, B, C)
+            if (filter.value === 'A' || filter.value === 'B' || filter.value === 'C') {
+              return project.ahj?.classification === filter.value;
+            }
+            // If we're filtering by ID
+            if (filter.entityId) {
+              return project.ahj_item_id?.toString() === filter.entityId?.toString();
+            }
+            // If we're filtering by name
+            return project.ahj?.name?.toLowerCase().includes(filter.value.toLowerCase());
+          });
           break;
         case 'utility':
-          filteredProjects = filteredProjects.filter(project =>
-            project.utility?.id === filter.value || project.utility_company_item_id === filter.entityId
-          );
-          break;
-        case 'financier':
-          filteredProjects = filteredProjects.filter(project =>
-            project.financier?.id === filter.value
-          );
+          filteredProjects = filteredProjects.filter(project => {
+            // If we're filtering by classification (A, B, C)
+            if (filter.value === 'A' || filter.value === 'B' || filter.value === 'C') {
+              return project.utility?.classification === filter.value;
+            }
+            // If we're filtering by ID
+            if (filter.entityId) {
+              return project.utility_company_item_id?.toString() === filter.entityId?.toString();
+            }
+            // If we're filtering by name
+            return project.utility?.name?.toLowerCase().includes(filter.value.toLowerCase());
+          });
           break;
         case '45day':
           filteredProjects = filteredProjects.filter(project => {
@@ -502,11 +547,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           filteredProjects = filteredProjects.filter(project => {
             // Check which entity type this classification filter applies to
             if (filter.entityType === 'ahj' || !filter.entityType) {
+              // Log for debugging
+              console.log(`Project ${project.id} AHJ classification:`, {
+                ahjId: project.ahj_item_id,
+                ahjObject: project.ahj,
+                classification: project.ahj?.classification,
+                filterValue: filter.value
+              });
               return project.ahj?.classification === filter.value;
             } else if (filter.entityType === 'utility') {
+              // Log for debugging
+              console.log(`Project ${project.id} Utility classification:`, {
+                utilityId: project.utility_company_item_id,
+                utilityObject: project.utility,
+                classification: project.utility?.classification,
+                filterValue: filter.value
+              });
               return project.utility?.classification === filter.value;
-            } else if (filter.entityType === 'financier') {
-              return project.financier?.classification === filter.value;
             }
             return false;
           });
@@ -739,7 +796,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // Check if any projects match the selected AHJ ID using string comparison
         const matchingProjects = (filteredProjects || []).filter(p => 
-          p.ahj?.id && p.ahj.id.toString() === ahjId.toString()
+          p.utility_company_item_id && p.utility_company_item_id.toString() === ahjId.toString()
         );
         
         // Try a different approach to find projects with the selected AHJ
@@ -789,7 +846,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const valueB = b[field as keyof Project]?.toString() || '';
       return valueA.localeCompare(valueB) * sortMultiplier;
     });
-
+    console.log('filtered projects', filteredProjects);
     // 6. Calculate project counts and relationship data for entities
     
     // For AHJs, calculate project counts and related utilities
