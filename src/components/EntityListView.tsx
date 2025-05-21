@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { FiMapPin } from 'react-icons/fi';
+import React, { useState, useEffect, useRef, useMemo, useCallback, TouchEvent } from 'react';
+import { FiMapPin, FiArrowLeft, FiArrowRight } from 'react-icons/fi';
 import { Project, ProjectFilter } from '@/utils/types';
 import { useData } from '@/contexts/DataContext';
 import EntityListItem from './EntityListItem';
@@ -15,9 +15,19 @@ interface EntityListViewProps {
 import { EntityData } from '@/hooks/useEntities';
 
 const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElement => {
+  // State for active tab in mobile view
+  const [activeTab, setActiveTab] = useState<'ahj' | 'utility'>('ahj');
+  
   // State for loaded items count (for infinite scrolling)
-  const [ahjLoadedCount, setAhjLoadedCount] = useState(20);
-  const [utilityLoadedCount, setUtilityLoadedCount] = useState(20);
+  const [ahjLoadedCount, setAhjLoadedCount] = useState(10000); // Set to max rows from Supabase
+  const [utilityLoadedCount, setUtilityLoadedCount] = useState(10000); // Set to max rows from Supabase
+  
+  // State for touch events (swipe functionality)
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+  
+  // Minimum swipe distance (in px)
+  const minSwipeDistance = 50;
   
   // Scroll container refs for both lists
   const ahjScrollContainerRef = useRef<HTMLDivElement>(null);
@@ -53,7 +63,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
   
   // Add focused logging for coordinate data analysis
   useEffect(() => {
-    console.log('[EntityListView] Coordinate Data Analysis', ahjs);
     
     // Log AHJ coordinate data
     if (ahjs && ahjs.length > 0) {
@@ -63,30 +72,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
                typeof coords.latitude === 'number' && 
                typeof coords.longitude === 'number';
       });
-      
-      console.log('[EntityListView] AHJs with valid coordinates:', {
-        total: ahjs.length,
-        withCoordinates: ahjsWithCoordinates.length,
-        percentage: `${((ahjsWithCoordinates.length / ahjs.length) * 100).toFixed(1)}%`
-      });
-      
-      // Sample the first few AHJs to examine their coordinate structure
-      const sampleSize = Math.min(3, ahjs.length);
-      console.log(`[EntityListView] Sample of ${sampleSize} AHJs:`);
-      for (let i = 0; i < sampleSize; i++) {
-        const ahj = ahjs[i];
-        const coords = (ahj as any).coordinates;
-        const rawData = (ahj as any).raw;
-        
-        console.log(`AHJ #${i+1} (${ahj.id})`, {
-          name: ahj.name,
-          coordinates: coords,
-          hasValidCoords: coords && 
-                         typeof coords.latitude === 'number' && 
-                         typeof coords.longitude === 'number',
-          rawPayload: rawData ? 'Available' : 'Not available'
-        });
-      }
     }
     
     // Log Utility coordinate data
@@ -97,30 +82,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
                typeof coords.latitude === 'number' && 
                typeof coords.longitude === 'number';
       });
-      
-      console.log('[EntityListView] Utilities with valid coordinates:', {
-        total: utilities.length,
-        withCoordinates: utilitiesWithCoordinates.length,
-        percentage: `${((utilitiesWithCoordinates.length / utilities.length) * 100).toFixed(1)}%`
-      });
-      
-      // Sample the first few utilities to examine their coordinate structure
-      const sampleSize = Math.min(3, utilities.length);
-      console.log(`[EntityListView] Sample of ${sampleSize} Utilities:`);
-      for (let i = 0; i < sampleSize; i++) {
-        const utility = utilities[i];
-        const coords = (utility as any).coordinates;
-        const rawData = (utility as any).raw;
-        
-        console.log(`Utility #${i+1} (${utility.id})`, {
-          name: utility.name,
-          coordinates: coords,
-          hasValidCoords: coords && 
-                         typeof coords.latitude === 'number' && 
-                         typeof coords.longitude === 'number',
-          rawPayload: rawData ? 'Available' : 'Not available'
-        });
-      }
     }
   }, [ahjs, utilities]);
   
@@ -167,15 +128,17 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
   }, [utilities]);
   
   // Limit displayed entities for infinite scrolling
-  const visibleAhjs = useMemo(() => 
-    filteredAhjs.slice(0, ahjLoadedCount),
-    [filteredAhjs, ahjLoadedCount]
-  );
+  const visibleAhjs = useMemo(() => {
+    // Ensure we load at least 50 items initially for better UX
+    const initialCount = Math.max(50, ahjLoadedCount);
+    return filteredAhjs.slice(0, initialCount);
+  }, [filteredAhjs, ahjLoadedCount]);
   
-  const visibleUtilities = useMemo(() => 
-    filteredUtilities.slice(0, utilityLoadedCount),
-    [filteredUtilities, utilityLoadedCount]
-  );
+  const visibleUtilities = useMemo(() => {
+    // Ensure we load at least 50 items initially for better UX
+    const initialCount = Math.max(50, utilityLoadedCount);
+    return filteredUtilities.slice(0, initialCount);
+  }, [filteredUtilities, utilityLoadedCount]);
   
   // Determine which entities are highlighted based on filters
   const highlightedAhjId = useMemo(() => {
@@ -273,9 +236,9 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
       
       const { scrollTop, scrollHeight, clientHeight } = ahjScrollContainerRef.current;
       
-      // Load more when scrolled to bottom (with a small buffer)
-      if (scrollHeight - scrollTop <= clientHeight + 100) {
-        setAhjLoadedCount(prev => prev + 10); // Load 10 more items
+      // Load more when scrolled to bottom (with a smaller buffer to ensure it triggers)
+      if (scrollHeight - scrollTop <= clientHeight + 200) {
+        setAhjLoadedCount(prev => prev + 20); // Load 20 more items at once for better UX
       }
     };
     
@@ -283,11 +246,16 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
     if (container) {
       container.addEventListener('scroll', handleScroll);
       
+      // Initial check to load more items if needed
+      setTimeout(() => {
+        handleScroll();
+      }, 100);
+      
       return () => {
         container.removeEventListener('scroll', handleScroll);
       };
     }
-  }, []);
+  }, [filteredAhjs.length]); // Re-attach when the filtered list changes
   
   // Handle scroll event for Utility list
   useEffect(() => {
@@ -296,9 +264,9 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
       
       const { scrollTop, scrollHeight, clientHeight } = utilityScrollContainerRef.current;
       
-      // Load more when scrolled to bottom (with a small buffer)
-      if (scrollHeight - scrollTop <= clientHeight + 100) {
-        setUtilityLoadedCount(prev => prev + 10); // Load 10 more items
+      // Load more when scrolled to bottom (with a smaller buffer to ensure it triggers)
+      if (scrollHeight - scrollTop <= clientHeight + 200) {
+        setUtilityLoadedCount(prev => prev + 20); // Load 20 more items at once for better UX
       }
     };
     
@@ -306,11 +274,16 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
     if (container) {
       container.addEventListener('scroll', handleScroll);
       
+      // Initial check to load more items if needed
+      setTimeout(() => {
+        handleScroll();
+      }, 100);
+      
       return () => {
         container.removeEventListener('scroll', handleScroll);
       };
     }
-  }, []);
+  }, [filteredUtilities.length]); // Re-attach when the filtered list changes
   
   // Update table height based on container size
   useEffect(() => {
@@ -417,7 +390,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
               entity={completeEntity}
               isSelected={entity.id === highlightedId}
               onSelect={() => handleSelect(entity)}
-              onViewOnMap={onViewOnMap ? () => onViewOnMap(entity.id, entityType) : undefined}
               entityType={entityType}
             />
           );
@@ -427,42 +399,114 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElemen
     );
   };
 
-  // Render the main component with side-by-side AHJ and Utility lists
+  // Handle touch events for swipe functionality
+  const onTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    setTouchEnd(null); // Reset touch end
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: TouchEvent<HTMLDivElement>) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    
+    const distance = touchStart - touchEnd;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+    
+    if (isLeftSwipe && activeTab === 'ahj') {
+      setActiveTab('utility');
+    } else if (isRightSwipe && activeTab === 'utility') {
+      setActiveTab('ahj');
+    }
+    
+    // Reset touch values
+    setTouchStart(null);
+    setTouchEnd(null);
+  };
+  
+  // Render the main component with responsive design
   return (
-    <div className="w-full h-full flex flex-col">
-      {/* Header with tabs */}
+    <div 
+      className="w-full h-full flex flex-col"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Header with tabs - responsive design */}
       <div className="flex bg-gray-800 border-b border-gray-700">
-      <div className="w-1/2 py-2 px-4 font-medium text-center">
-          Utilities ({filteredUtilities.length})
-          <div className="text-xs text-gray-400">
-            Processed: {allUtilities.length} | Filtered: {utilities.length}
-          </div>
-        </div>
-        <div className="w-1/2 py-2 px-4 font-medium text-center border-r border-gray-700">
+        {/* Mobile tabs */}
+        <button
+          onClick={() => setActiveTab('ahj')}
+          className={`w-1/2 py-3 px-4 font-medium text-center ${activeTab === 'ahj' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
+        >
           AHJs ({filteredAhjs.length})
-          <div className="text-xs text-gray-400">
-            Processed: {allAhjs.length} | Filtered: {ahjs.length}
-          </div>
-        </div>
-        
+        </button>
+        <button
+          onClick={() => setActiveTab('utility')}
+          className={`w-1/2 py-3 px-4 font-medium text-center ${activeTab === 'utility' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
+        >
+          Utilities ({filteredUtilities.length})
+        </button>
       </div>
       
-      {/* Content area with two scrollable lists */}
-      <div className="flex flex-grow overflow-hidden">
-        {/* Utility List */}
-        <div 
-          ref={utilityScrollContainerRef}
-          className="w-1/2 overflow-y-auto"
-        >
-          {renderEntityList('utility')}
+      {/* Content area with responsive lists */}
+      <div className="flex-grow overflow-hidden">
+        {/* Swipe indicator for mobile */}
+        <div className="md:hidden flex justify-center items-center text-gray-500 text-xs py-1">
+          <FiArrowLeft className="mr-1" /> Swipe to switch lists <FiArrowRight className="ml-1" />
         </div>
         
-        {/* AHJ List */}
-        <div 
-          ref={ahjScrollContainerRef}
-          className="w-1/2 overflow-y-auto border-r border-gray-700"
-        >
-          {renderEntityList('ahj')}
+        {/* Desktop: Side-by-side lists */}
+        <div className="hidden md:flex h-full">
+          {/* AHJ List */}
+          <div 
+            ref={ahjScrollContainerRef}
+            className="w-1/2 overflow-y-auto border-r border-gray-700 max-h-full"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            <div className="h-full pb-20">
+              {renderEntityList('ahj')}
+            </div>
+          </div>
+          
+          {/* Utility List */}
+          <div 
+            ref={utilityScrollContainerRef}
+            className="w-1/2 overflow-y-auto max-h-full"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            <div className="h-full pb-20">
+              {renderEntityList('utility')}
+            </div>
+          </div>
+        </div>
+        
+        {/* Mobile: Single list with tabs */}
+        <div className="md:hidden h-full">
+          {/* AHJ List - shown when AHJ tab is active */}
+          <div 
+            ref={ahjScrollContainerRef}
+            className={`h-full overflow-y-auto ${activeTab === 'ahj' ? 'block' : 'hidden'}`}
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            <div className="pb-20">
+              {renderEntityList('ahj')}
+            </div>
+          </div>
+          
+          {/* Utility List - shown when Utility tab is active */}
+          <div 
+            ref={utilityScrollContainerRef}
+            className={`h-full overflow-y-auto ${activeTab === 'utility' ? 'block' : 'hidden'}`}
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            <div className="pb-20">
+              {renderEntityList('utility')}
+            </div>
+          </div>
         </div>
       </div>
     </div>

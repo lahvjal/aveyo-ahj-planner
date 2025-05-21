@@ -91,10 +91,9 @@ export function extractCoordinates(rawPayload: any): { latitude?: number; longit
     
     // Check if payload has raw_payload
     if (typeof rawPayload !== 'object' || !rawPayload.raw_payload) {
-      console.warn('[extractCoordinates] No raw_payload found in first level');
       return { status: 'missing-first-level' };
     }
-    // console.log('extract function object', rawPayload)
+
     // Get first level raw_payload
     let firstLevelPayload = rawPayload.raw_payload;
     
@@ -103,14 +102,12 @@ export function extractCoordinates(rawPayload: any): { latitude?: number; longit
       try {
         firstLevelPayload = JSON.parse(firstLevelPayload);
       } catch (e) {
-        console.warn('[extractCoordinates] Failed to parse first level payload:', e);
         return { status: 'parse-error-first-level' };
       }
     }
     
     // Check if first level payload has raw_payload
     if (typeof firstLevelPayload !== 'object' || !firstLevelPayload.raw_payload) {
-      // console.warn('[extractCoordinates] No raw_payload found in second level');
       return { status: 'missing-second-level' };
     }
     
@@ -122,54 +119,44 @@ export function extractCoordinates(rawPayload: any): { latitude?: number; longit
       try {
         secondLevelPayload = JSON.parse(secondLevelPayload);
       } catch (e) {
-        // console.warn('[extractCoordinates] Failed to parse second level payload:', e);
         return { status: 'parse-error-second-level' };
       }
     }
     
     // Check if coordinates exist in second level raw_payload
     if (typeof secondLevelPayload !== 'object') {
-      // console.warn('[extractCoordinates] Second level payload is not an object');
       return { status: 'invalid-second-level' };
     }
     
     // Check for empty strings explicitly
     if (secondLevelPayload.latitude === '' || secondLevelPayload.longitude === '') {
-      // console.warn('[extractCoordinates] Empty string coordinates detected');
       return { status: 'empty-string-coordinates' };
     }
     
     // Extract latitude and longitude
     const lat = parseFloat(String(secondLevelPayload.latitude || ''));
     const lng = parseFloat(String(secondLevelPayload.longitude || ''));
-    console.log('extracted coord in function', lat, lng, secondLevelPayload, firstLevelPayload)
     // Validate coordinates
     if (isNaN(lat) || isNaN(lng)) {
-      console.warn('[extractCoordinates] Invalid coordinates:', { lat, lng, rawLat: secondLevelPayload.latitude, rawLng: secondLevelPayload.longitude });
       return { status: 'invalid-coordinates' };
     }
     
     if (lat < -90 || lat > 90) {
-      console.warn('[extractCoordinates] Latitude out of range:', lat);
       return { status: 'invalid-latitude-range' };
     }
     
     if (lng < -180 || lng > 180) {
-      console.warn('[extractCoordinates] Longitude out of range:', lng);
       return { status: 'invalid-longitude-range' };
     }
     
     // Skip 0,0 coordinates as they're likely invalid/default values
     if (lat === 0 && lng === 0) {
-      console.warn('[extractCoordinates] Zero coordinates detected');
       return { status: 'zero-coordinates' };
     }
     
     // Valid coordinates found
-    console.log('[extractCoordinates] Found valid coordinates:', { latitude: lat, longitude: lng });
     return { latitude: lat, longitude: lng };
   } catch (error) {
-    console.error('[extractCoordinates] Error processing coordinates:', error);
     return { status: 'exception' };
   }
 }
@@ -237,13 +224,6 @@ export const extractEntityName = (
   entityType: 'ahj' | 'utility' | 'financier'
 ): string => {
   try {
-    // Log entity structure for debugging - safe logging to avoid serialization errors
-    // console.log(`[extractEntityName] Extracting name for ${entityType}:`, {
-    //   keys: entity ? Object.keys(entity) : 'null entity',
-    //   hasRawPayload: entity && entity.raw_payload ? true : false,
-    //   rawPayloadType: entity && entity.raw_payload ? typeof entity.raw_payload : 'none',
-    //   entityType
-    // });
     
     if (entityType === 'ahj') {
       // AHJ names are stored in raw_payload.raw_payload.name

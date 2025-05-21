@@ -34,18 +34,6 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
   
   const { userProfile } = useAuth();
   
-  // Log data received by ProjectListView component
-  useEffect(() => {
-    // console.log('===== PROJECTLISTVIEW COMPONENT DATA =====');
-    // console.log('Projects received:', projects.length);
-    // console.log('Filtered projects (showOnlyUserProjects):', 
-    //   showOnlyUserProjects && userProfile ? 
-    //   projects.filter(p => p.rep_id === userProfile.rep_id).length : 
-    //   'N/A');
-    // console.log('Filters:', filters);
-    // console.log('===== END PROJECTLISTVIEW COMPONENT DATA =====');
-  }, [projects, filters, showOnlyUserProjects, userProfile]);
-  
   // Local state for sorting
   const [localSortField, setLocalSortField] = useState<string>('name');
   const [localSortDirection, setLocalSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -57,7 +45,12 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
   const [loadedCount, setLoadedCount] = useState(20);
   
   // Filter projects if showing only user's projects
+  // This will work with both server-rendered and client-fetched data
   const filteredProjects = useMemo(() => {
+    // First check if we have projects data
+    if (!projects || projects.length === 0) return [];
+    
+    // Then apply user filtering if needed
     if (!showOnlyUserProjects || !userProfile) return projects;
     return projects.filter(project => project.rep_id === userProfile.rep_id);
   }, [projects, showOnlyUserProjects, userProfile]);
@@ -183,8 +176,8 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
     }
   };
   
-  // Render loading state
-  if (isLoading) {
+  // Render loading state - only show if we don't have any projects data yet
+  if (isLoading && (!projects || projects.length === 0)) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-gray-400">Loading projects...</div>
@@ -201,17 +194,15 @@ const ProjectListView: React.FC<ProjectListViewProps> = ({
     );
   }
   
-  // Render empty state
+  // Show empty state if we have no projects after filtering
   if (filteredProjects.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full p-4">
-        <EmptyState 
-          title={showOnlyUserProjects ? "No Projects Assigned to You" : "No Projects Found"} 
-          message={showOnlyUserProjects 
-            ? "You don't have any projects assigned to you yet."
-            : "Try adjusting your filters to see more results."
-          }
-          icon="folder"
+      <div className="flex flex-col items-center justify-center h-full p-4">
+        <EmptyState
+          title="No Projects Found"
+          message={showOnlyUserProjects ? 
+            "You don't have any projects assigned to you that match the current filters." : 
+            "No projects match the current filters."}
         />
       </div>
     );

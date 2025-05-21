@@ -1,15 +1,21 @@
-import React, { useState, KeyboardEvent } from 'react';
+import React, { useState, KeyboardEvent, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ProjectFilter, ImprovedFilterPanelProps } from '@/utils/types';
 import CollapsibleFilterSection from './CollapsibleFilterSection';
 import ActiveFilterChip from './ActiveFilterChip';
-import { FiMap, FiList, FiSearch, FiLogOut } from 'react-icons/fi';
+import { FiMap, FiList, FiSearch, FiLogOut, FiX, FiFilter, FiFileText } from 'react-icons/fi';
 import { useAuth } from '@/utils/AuthContext';
 import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
 import ToggleOption from './ToggleOption';
 
-const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
+interface ImprovedFilterPanelExtendedProps extends ImprovedFilterPanelProps {
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+  isMobile?: boolean;
+}
+
+const ImprovedFilterPanel: React.FC<ImprovedFilterPanelExtendedProps> = ({
   filters,
   addFilter,
   removeFilter,
@@ -18,6 +24,9 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
   searchTerms = '',
   showOnlyMyProjects,
   toggleShowOnlyMyProjects,
+  isCollapsed = false,
+  onToggleCollapse,
+  isMobile = false,
 }) => {
   const [searchInput, setSearchInput] = useState('');
   const { signOut, userProfile } = useAuth();
@@ -123,18 +132,64 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
     );
   };
 
+  // Handle window resize to detect mobile view
+  useEffect(() => {
+    const handleResize = () => {
+      // This is just for demonstration - the actual mobile detection is passed as a prop
+      // You could implement actual resize detection here if needed
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // If the panel is collapsed on mobile, show a minimal version
+  if (isMobile && isCollapsed) {
+    return (
+      <div className="fixed inset-0 z-50 pointer-events-none">
+        <div className="absolute bottom-20 right-4 pointer-events-auto">
+          <button
+            onClick={onToggleCollapse}
+            className="bg-blue-500 text-white p-3 rounded-full shadow-lg"
+            aria-label="Open filters"
+          >
+            <FiFilter size={20} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Full panel view (desktop or expanded mobile)
   return (
-    <div className="h-full flex flex-col bg-gray-900 text-white">
-      {/* Logo and App Title */}
-      <div className="p-4 border-b border-gray-700 flex items-center justify-center">
-        <Image
-          src="/aveyo-logo.svg"
-          alt="Aveyo Logo"
-          width={40}
-          height={40}
-          className="mr-2"
-        />
-        <h1 className="text-xl font-bold">AHJ Knock Planner</h1>
+    <div 
+      className={`h-full flex flex-col bg-gray-900 text-white ${
+        isMobile ? 'fixed inset-0 z-50' : ''
+      }`}
+    >
+      {/* Header with logo and close button for mobile */}
+      <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+        <div className="flex items-center">
+          <Image
+            src="/aveyo-logo.svg"
+            alt="Aveyo Logo"
+            width={40}
+            height={40}
+            className="mr-2"
+          />
+          <h1 className="text-xl font-bold">AHJ Knock Planner</h1>
+        </div>
+        
+        {/* Close button only on mobile */}
+        {isMobile && onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="text-gray-400 hover:text-white"
+            aria-label="Close filters"
+          >
+            <FiX size={24} />
+          </button>
+        )}
       </div>
       
       {/* Search Bar */}
@@ -272,15 +327,40 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelProps> = ({
         </CollapsibleFilterSection> */}
       </div>
       
+      {/* 45 Day Timeline PDF Link */}
+      <div className="p-4 border-t border-gray-700">
+        <a 
+          href="/45 DAYS TO PAY TIMELINE.pdf" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex items-center text-blue-400 hover:text-blue-300"
+        >
+          <FiFileText className="mr-2" />
+          45 Days to Pay Timeline
+        </a>
+      </div>
+      
       {/* Logout Button */}
       <div className="p-4 border-t border-gray-700">
-        <button 
-          onClick={handleLogout}
-          className="flex items-center text-gray-400 hover:text-white"
-        >
-          <FiLogOut className="mr-2" />
-          Logout
-        </button>
+        <div className="flex justify-between items-center">
+          <button 
+            onClick={handleLogout}
+            className="flex items-center text-gray-400 hover:text-white"
+          >
+            <FiLogOut className="mr-2" />
+            Logout
+          </button>
+          
+          {/* Done button for mobile */}
+          {isMobile && onToggleCollapse && (
+            <button
+              onClick={onToggleCollapse}
+              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+            >
+              Done
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

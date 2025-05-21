@@ -8,6 +8,11 @@
   grid-template-columns: 4fr 1fr 1fr 2fr 2fr;
 }
 
+.grid-cols-4-new {
+  display: grid;
+  grid-template-columns: 4fr 2fr 1fr 2fr;
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

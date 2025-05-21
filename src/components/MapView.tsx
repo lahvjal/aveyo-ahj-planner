@@ -528,6 +528,31 @@ const MapView: React.FC<MapViewProps> = ({
   }, [addFilter, filters.filters]);
 
   /**
+   * Generates a randomized location offset for non-user projects
+   * Creates a random offset approximately 100-200 meters from the actual location
+   */
+  const getRandomizedLocation = (latitude: number, longitude: number, isUserProject: boolean): [number, number] => {
+    // If it's the user's project, return the actual coordinates
+    if (isUserProject) {
+      return [longitude, latitude];
+    }
+    
+    // For non-user projects, create a randomized offset
+    // Approximately 0.001 degrees is about 100 meters (varies by latitude)
+    const offsetRange = 0.002; // Range of 0.002 degrees (~200 meters)
+    
+    // Generate random offsets between -offsetRange and +offsetRange
+    const latOffset = (Math.random() - 0.5) * offsetRange;
+    const lngOffset = (Math.random() - 0.5) * offsetRange;
+    
+    // Apply offsets to coordinates
+    const randomizedLat = latitude + latOffset;
+    const randomizedLng = longitude + lngOffset;
+    
+    return [randomizedLng, randomizedLat];
+  };
+  
+  /**
    * Creates a masked project pin with reduced visibility
    * Used for projects that should have their exact location partially obscured
    */
@@ -549,13 +574,20 @@ const MapView: React.FC<MapViewProps> = ({
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
     
-    // Opacity - user's projects are more visible, others are more masked
-    el.style.opacity = isUserProject ? '0.9' : '0.5';
-    el.style.zIndex = isUserProject ? '7' : '5'; // User's projects appear above others
+    // Opacity - user's projects are visible, others are completely masked (invisible)
+    el.style.opacity = isUserProject ? '0.9' : '0';
+    el.style.zIndex = isUserProject ? '7' : '1'; // User's projects appear above others
     
     try {
+      // Get coordinates (randomized for non-user projects)
+      const coordinates = getRandomizedLocation(
+        project.latitude!, 
+        project.longitude!, 
+        isUserProject
+      );
+      
       const marker = new mapboxgl.Marker(el)
-        .setLngLat([project.longitude!, project.latitude!])
+        .setLngLat(coordinates)
         .addTo(map);
       
       marker.getElement().addEventListener('click', () => {
@@ -601,8 +633,15 @@ const MapView: React.FC<MapViewProps> = ({
     }
     
     try {
+      // Get coordinates (randomized for non-user projects)
+      const coordinates = getRandomizedLocation(
+        project.latitude!, 
+        project.longitude!, 
+        isUserProject
+      );
+      
       const marker = new mapboxgl.Marker(el)
-        .setLngLat([project.longitude!, project.latitude!])
+        .setLngLat(coordinates)
         .addTo(map);
       
       marker.getElement().addEventListener('click', () => {
@@ -656,8 +695,11 @@ const MapView: React.FC<MapViewProps> = ({
       const shouldMask = !(isComplete || isAssignedToCurrentUser);
       
       if (shouldMask) {
-        // Create masked project pin (reduced visibility for privacy)
-        createMaskedProjectPin(project, map);
+        // Only create masked pins for user's projects, skip others entirely
+        if (isAssignedToCurrentUser) {
+          createMaskedProjectPin(project, map);
+        }
+        // Non-user masked projects are not displayed at all
       } else {
         // Create standard project pin
         createStandardProjectPin(project, map);

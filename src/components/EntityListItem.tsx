@@ -13,7 +13,6 @@ interface EntityListItemProps {
   isSelected: boolean;
   isHighlighted?: boolean; // Add optional isHighlighted prop
   onSelect: (entity: EntityData) => void;
-  onViewOnMap?: (entityName: string, entityType: 'ahj' | 'utility') => void;
   entityType: 'ahj' | 'utility';
   distance?: number; // Add optional distance prop
 }
@@ -23,7 +22,6 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
   isSelected,
   isHighlighted = false,
   onSelect,
-  onViewOnMap,
   entityType,
   distance
 }) => {
@@ -41,7 +39,7 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
   
   return (
     <div 
-      className={`grid-cols-5-new hover:bg-[#1e1e1e] cursor-pointer ${
+      className={`grid-cols-4-new hover:bg-[#1e1e1e] cursor-pointer ${
         isHighlighted ? 'border-l-4 border-blue-500 bg-blue-900/20' : ''
       }`}
       onClick={() => onSelect(entity)}
@@ -49,10 +47,9 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
       <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
         <span className="truncate block">{entity.name}</span>
       </div>
-      <div className="px-0 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis text-center">
-        <span className="truncate flex items-center gap-1">
-          {entity.projectCount}
-          <span className="text-gray-400 ml-1" style={{ fontSize: '8px' }}>P R J</span>
+      <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
+        <span className={`truncate flex items-center gap-1 justify-center ${(entity.latitude && entity.longitude && entity.distance !== undefined && entity.distance !== Infinity) ? '' : 'text-gray-500'}`}>
+          {formatDistance(entity.distance, entity.coordStatus)}<span className="text-gray-400 ml-1" style={{ fontSize: '8px' }}>M I</span>
         </span>
       </div>
       <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-center">
@@ -60,25 +57,11 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
           {formatClassification(entity.classification)}
         </span>
       </div>
-      <div className="px-6 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis">
-        <span className={`truncate flex items-center gap-1 ${(entity.latitude && entity.longitude && entity.distance !== undefined && entity.distance !== Infinity) ? '' : 'text-gray-500'}`}>
-          {formatDistance(entity.distance, entity.coordStatus)}<span className="text-gray-400 ml-1" style={{ fontSize: '8px' }}>M I L</span>
+      <div className="px-0 py-4 whitespace-nowrap text-sm text-white overflow-hidden text-ellipsis text-center">
+        <span className="truncate flex items-center gap-1 justify-center">
+          {entity.projectCount}
+          <span className="text-gray-400 ml-1" style={{ fontSize: '8px' }}>P R J</span>
         </span>
-      </div>
-      <div className="px-6 pr-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (entity.latitude && entity.longitude && onViewOnMap) {
-              onViewOnMap(entity.name, entityType);
-            }
-          }}
-          className={`flex items-center justify-end ${entity.latitude && entity.longitude && onViewOnMap ? 'text-gray-300 hover:text-white' : 'text-gray-800 cursor-default'}`}
-          disabled={!entity.latitude || !entity.longitude || !onViewOnMap}
-        >
-          <FiMapPin className="mr-1" />
-          Map
-        </button>
       </div>
     </div>
   );
