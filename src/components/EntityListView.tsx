@@ -14,7 +14,7 @@ interface EntityListViewProps {
 // Import the EntityData type from useEntities to ensure consistency
 import { EntityData } from '@/hooks/useEntities';
 
-const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode => {
+const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactElement => {
   // State for loaded items count (for infinite scrolling)
   const [ahjLoadedCount, setAhjLoadedCount] = useState(20);
   const [utilityLoadedCount, setUtilityLoadedCount] = useState(20);
@@ -47,13 +47,82 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
   );
   
   // Use the already filtered entities directly
-  const ahjs = allAhjs;
-  const utilities = allUtilities;
+  // These are already filtered by the DataContext which is hydrated with server data
+  const ahjs = allAhjs || [];
+  const utilities = allUtilities || [];
   
-  // Log data received by EntityListView component
+  // Add focused logging for coordinate data analysis
   useEffect(() => {
+    console.log('[EntityListView] Coordinate Data Analysis', ahjs);
     
-  }, [projects, allAhjs, allUtilities, filters, isLoading, error, ahjs, utilities]);
+    // Log AHJ coordinate data
+    if (ahjs && ahjs.length > 0) {
+      const ahjsWithCoordinates = ahjs.filter(ahj => {
+        const coords = (ahj as any).coordinates;
+        return coords && 
+               typeof coords.latitude === 'number' && 
+               typeof coords.longitude === 'number';
+      });
+      
+      console.log('[EntityListView] AHJs with valid coordinates:', {
+        total: ahjs.length,
+        withCoordinates: ahjsWithCoordinates.length,
+        percentage: `${((ahjsWithCoordinates.length / ahjs.length) * 100).toFixed(1)}%`
+      });
+      
+      // Sample the first few AHJs to examine their coordinate structure
+      const sampleSize = Math.min(3, ahjs.length);
+      console.log(`[EntityListView] Sample of ${sampleSize} AHJs:`);
+      for (let i = 0; i < sampleSize; i++) {
+        const ahj = ahjs[i];
+        const coords = (ahj as any).coordinates;
+        const rawData = (ahj as any).raw;
+        
+        console.log(`AHJ #${i+1} (${ahj.id})`, {
+          name: ahj.name,
+          coordinates: coords,
+          hasValidCoords: coords && 
+                         typeof coords.latitude === 'number' && 
+                         typeof coords.longitude === 'number',
+          rawPayload: rawData ? 'Available' : 'Not available'
+        });
+      }
+    }
+    
+    // Log Utility coordinate data
+    if (utilities && utilities.length > 0) {
+      const utilitiesWithCoordinates = utilities.filter(utility => {
+        const coords = (utility as any).coordinates;
+        return coords && 
+               typeof coords.latitude === 'number' && 
+               typeof coords.longitude === 'number';
+      });
+      
+      console.log('[EntityListView] Utilities with valid coordinates:', {
+        total: utilities.length,
+        withCoordinates: utilitiesWithCoordinates.length,
+        percentage: `${((utilitiesWithCoordinates.length / utilities.length) * 100).toFixed(1)}%`
+      });
+      
+      // Sample the first few utilities to examine their coordinate structure
+      const sampleSize = Math.min(3, utilities.length);
+      console.log(`[EntityListView] Sample of ${sampleSize} Utilities:`);
+      for (let i = 0; i < sampleSize; i++) {
+        const utility = utilities[i];
+        const coords = (utility as any).coordinates;
+        const rawData = (utility as any).raw;
+        
+        console.log(`Utility #${i+1} (${utility.id})`, {
+          name: utility.name,
+          coordinates: coords,
+          hasValidCoords: coords && 
+                         typeof coords.latitude === 'number' && 
+                         typeof coords.longitude === 'number',
+          rawPayload: rawData ? 'Available' : 'Not available'
+        });
+      }
+    }
+  }, [ahjs, utilities]);
   
   // Helper function to get related entities
   const getRelatedUtilities = useCallback((ahjId: string) => {
@@ -88,11 +157,13 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
   // Use the already filtered and sorted entities directly from DataContext
   // No additional sorting needed as DataContext now handles all sorting logic
   const filteredAhjs = useMemo(() => {
-    return ahjs; // Already sorted by DataContext
+    // Ensure we have data before returning
+    return ahjs && ahjs.length > 0 ? ahjs : []; // Already sorted by DataContext
   }, [ahjs]);
   
   const filteredUtilities = useMemo(() => {
-    return utilities; // Already sorted by DataContext
+    // Ensure we have data before returning
+    return utilities && utilities.length > 0 ? utilities : []; // Already sorted by DataContext
   }, [utilities]);
   
   // Limit displayed entities for infinite scrolling
@@ -279,6 +350,36 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     };
   }, []);
   
+  // Handle loading state - only show if we don't have any entity data yet
+  if (isLoading && (!ahjs || ahjs.length === 0) && (!utilities || utilities.length === 0)) {
+    return (
+      <div className="flex items-center justify-center h-full p-4">
+        <div className="text-gray-400">Loading entities...</div>
+      </div>
+    );
+  }
+  
+  // Handle error state
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full p-4">
+        <div className="text-red-500">Error loading entities: {error}</div>
+      </div>
+    );
+  }
+  
+  // Show empty state if we have no entities after filtering
+  if ((!filteredAhjs || filteredAhjs.length === 0) && (!filteredUtilities || filteredUtilities.length === 0)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-4">
+        <EmptyState
+          title="No Entities Found"
+          message="Try adjusting your filters or search criteria."
+        />
+      </div>
+    );
+  }
+  
   // Render a single entity list (AHJ or Utility)
   const renderEntityList = (entityType: 'ahj' | 'utility') => {
     const entities = entityType === 'ahj' ? visibleAhjs : visibleUtilities;
@@ -286,22 +387,6 @@ const EntityListView = ({ onViewOnMap }: EntityListViewProps): React.ReactNode =
     const handleSelect = entityType === 'ahj' ? handleAhjSelect : handleUtilitySelect;
     const emptyTitle = entityType === 'ahj' ? 'No AHJs Found' : 'No Utilities Found';
     const emptyMessage = 'Try adjusting your filters to see more results.';
-    
-    if (isLoading) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-gray-400">Loading...</div>
-        </div>
-      );
-    }
-    
-    if (error) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-red-500">Error loading data: {error}</div>
-        </div>
-      );
-    }
     
     if (entities.length === 0) {
       return (

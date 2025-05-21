@@ -80,6 +80,9 @@ interface DataContextType extends FilteredData {
   // Data fetching
   refreshData: () => Promise<void>;
   fetchAllData: () => Promise<void>;
+  
+  // Server-side hydration
+  hydrateFromServer: (serverData: any) => void;
 }
 
 // Create the context
@@ -208,11 +211,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }));
     }
   }, []);
-
-  // Fetch data on initial load
-  useEffect(() => {
-    fetchAllData();
-  }, [fetchAllData]);
   
   // Initialize user location
   useEffect(() => {
@@ -329,11 +327,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Process raw entities into our standard format
   const processedEntities = useMemo(() => {
-
     // Process AHJs - with more robust field extraction
     const processedAhjs = rawData.ahjs.map(ahj => {
-      // Extract ID from various possible field names
-      const id = ahj.ahj_item_id || '';
+      // Extract ID from various possible field names - much more flexible
+      const id = ahj.ahj_item_id || ahj.id || ahj._id || ahj.ahj_id || 
+                (ahj.raw_payload && (ahj.raw_payload.ahj_item_id || ahj.raw_payload.id)) || '';
       
       // Extract name using the extractEntityName function which handles nested structures
       // This function already knows how to extract from raw_payload.raw_payload.name
@@ -345,8 +343,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const classification = extractClassification(rawClassification);
       
       // Extract coordinates with status
-      const coordinates = extractCoordinates(ahj.coordinates || ahj.raw_payload);
-      
+      const coordinates = extractCoordinates(ahj.raw);
       // Determine coordinate status
       // If latitude and longitude are present, it's valid
       // Otherwise use the status from extractCoordinates or fallback to 'unknown'
@@ -364,12 +361,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         longitude: coordinates.longitude,
         coordStatus
       };
-    }).filter(ahj => ahj.id); // Filter out any AHJs without an ID
-
+    }).filter(ahj => {
+      // Log AHJs that would be filtered out for debugging
+      if (!ahj.id) {
+        console.warn('[DataContext] AHJ filtered out due to missing ID:', ahj);
+        return false;
+      }
+      return true;
+    }); // Filter out any AHJs without an ID
+    
     // Process Utilities - with more robust field extraction
     const processedUtilities = rawData.utilities.map(utility => {
-      // Extract ID from various possible field names
-      const id = utility.utility_company_item_id || '';
+      // Extract ID from various possible field names - much more flexible
+      const id = utility.utility_company_item_id || utility.id || utility._id || utility.utility_id || 
+                (utility.raw_payload && (utility.raw_payload.utility_company_item_id || utility.raw_payload.id)) || '';
       
       // Extract name from various possible field names - handle nested structures
       // First try to use the extractEntityName function which handles nested structures
@@ -400,9 +405,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         longitude: coordinates.longitude,
         coordStatus
       };
-    }).filter(utility => utility.id); // Filter out any utilities without an ID
+    }).filter(utility => {
+      // Log utilities that would be filtered out for debugging
+      if (!utility.id) {
+        console.warn('[DataContext] Utility filtered out due to missing ID:', utility);
+        return false;
+      }
+      return true;
+    }); // Filter out any utilities without an ID
+    
     return { ahjs: processedAhjs, utilities: processedUtilities };
-  }, [rawData.ahjs, rawData.utilities, rawData.isLoading]);
+  }, [rawData]); // Use the entire rawData object as a dependency
 
   // The core of the filtering system - all filtering logic in one place
   const filteredData = useMemo(() => {
@@ -410,6 +423,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (rawData.isLoading || rawData.projects.length === 0) {
       return { projects: [], ahjs: [], utilities: [], financiers: [] };
     }
+    
+    // Log processed entities for debugging
+    console.log('[DataContext] Processed entities before filtering:', {
+      processedAhjsCount: processedEntities.ahjs.length,
+      processedUtilitiesCount: processedEntities.utilities.length,
+      ahjsWithCoordinates: processedEntities.ahjs.filter(ahj => ahj.latitude && ahj.longitude).length,
+      utilitiesWithCoordinates: processedEntities.utilities.filter(utility => utility.latitude && utility.longitude).length,
+      sampleAhj: processedEntities.ahjs.length > 0 ? processedEntities.ahjs[0] : null,
+      sampleUtility: processedEntities.utilities.length > 0 ? processedEntities.utilities[0] : null
+    });
 
     // Extract coordinates for all projects
     let filteredProjects = rawData.projects.map(project => {
@@ -471,19 +494,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     });
     
-    // Log a sample project to verify the structure
-    if (filteredProjects.length > 0) {
-      console.log('Sample project with attached entities:', {
-        projectId: filteredProjects[0].id,
-        ahjId: filteredProjects[0].ahj_item_id,
-        attachedAhj: filteredProjects[0].ahj,
-        utilityId: filteredProjects[0].utility_company_item_id,
-        attachedUtility: filteredProjects[0].utility
-      });
-    }
-    
-    // Log how many projects have coordinates now
-    console.log('Filters:', filters);
     // 1. Apply all filters to projects
     filters.filters.forEach(filter => {
       switch (filter.type) {
@@ -547,22 +557,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           filteredProjects = filteredProjects.filter(project => {
             // Check which entity type this classification filter applies to
             if (filter.entityType === 'ahj' || !filter.entityType) {
-              // Log for debugging
-              console.log(`Project ${project.id} AHJ classification:`, {
-                ahjId: project.ahj_item_id,
-                ahjObject: project.ahj,
-                classification: project.ahj?.classification,
-                filterValue: filter.value
-              });
               return project.ahj?.classification === filter.value;
             } else if (filter.entityType === 'utility') {
-              // Log for debugging
-              console.log(`Project ${project.id} Utility classification:`, {
-                utilityId: project.utility_company_item_id,
-                utilityObject: project.utility,
-                classification: project.utility?.classification,
-                filterValue: filter.value
-              });
               return project.utility?.classification === filter.value;
             }
             return false;
@@ -799,19 +795,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           p.utility_company_item_id && p.utility_company_item_id.toString() === ahjId.toString()
         );
         
-        // Try a different approach to find projects with the selected AHJ
-        // Log the raw project data to see all available fields
-        if (filteredProjects && filteredProjects.length > 0) {
-          const firstProject = filteredProjects[0];
-          console.log('COMPLETE PROJECT DEBUG (AHJ):', {
-            fullProject: firstProject,
-            // Check if there are any fields that might contain the AHJ ID
-            ahjRelatedFields: Object.keys(firstProject).filter(key => 
-              key.toLowerCase().includes('ahj') || key.toLowerCase().includes('authority')
-            )
-          });
-        }
-        
         // Find all projects that have the selected AHJ
         // Access the AHJ ID directly from the ahj_item_id property
         const projectsWithSelectedAhj = (filteredProjects || []).filter(p => {
@@ -846,7 +829,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const valueB = b[field as keyof Project]?.toString() || '';
       return valueA.localeCompare(valueB) * sortMultiplier;
     });
-    console.log('filtered projects', filteredProjects);
     // 6. Calculate project counts and relationship data for entities
     
     // For AHJs, calculate project counts and related utilities
@@ -860,7 +842,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Try both the nested structure and the direct field
         return p.ahj?.id === ahj.id || (p as any).ahj_item_id === ahj.id;
       });
-      // console.log(`DEBUG: Found ${ahjProjects.length} projects with AHJ ID: ${ahj.id}`);
       
       // If we didn't find any matches, try a different approach - match by name
       if (ahjProjects.length === 0) {
@@ -1081,9 +1062,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       financiers: rawData.financiers // Financiers might not need filtering
     };
     
+    // Log AHJs that will be sent to EntityListView
+    console.log('[DataContext] AHJs sent to EntityListView:', { count: filteredAhjs.length, withCoordinates: filteredAhjs.filter(ahj => ahj.latitude && ahj.longitude).length, sample: filteredAhjs.slice(0, 3) });
+    
     // Return the final filtered data
     return finalFilteredData;
   }, [rawData, processedEntities, filters, userLocation]);
+
+  // Hydrate data from server
+  const hydrateFromServer = useCallback((serverData: any) => {
+    if (!serverData) return;
+    
+    // Set loading state to false since we have data
+    setRawData(prev => {
+      const newState = {
+        ...prev,
+        projects: serverData.projects || [],
+        ahjs: serverData.ahjs || [],
+        utilities: serverData.utilities || [],
+        financiers: serverData.financiers || [],
+        isLoading: false,
+        error: serverData.error || null
+      };
+      
+      return newState;
+    });
+    // Apply filters from server data if available
+    if (serverData.filters && Array.isArray(serverData.filters)) {
+      // Clear existing filters first
+      setFilters(prev => ({
+        ...prev,
+        filters: []
+      }));
+      
+      // Add each filter from server data
+      serverData.filters.forEach((filter: ProjectFilter) => {
+        addFilter(filter);
+      });
+    }
+    
+    // Set user profile if available
+    if (serverData.userProfile) {
+      // This would typically be handled by AuthContext
+      // but we can use it for filtering if needed
+    }
+  }, [addFilter]);
 
   // Context value
   const value: DataContextType = {
@@ -1129,7 +1152,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     // Data fetching
     refreshData,
-    fetchAllData
+    fetchAllData,
+    
+    // Server-side hydration
+    hydrateFromServer
   };
 
   return (

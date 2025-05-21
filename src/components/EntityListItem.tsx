@@ -46,6 +46,7 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
     });
   }, [entity, entityType]);
   // No debug logging needed
+  // console.log('ENTITY DATA:', entity);
   return (
     <div 
       className={`grid-cols-5-new hover:bg-[#1e1e1e] cursor-pointer ${

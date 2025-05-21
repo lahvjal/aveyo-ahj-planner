@@ -78,117 +78,154 @@ const findCoordinatesInNestedStructure = (obj: any, depth: number = 0, maxDepth:
   return {};
 };
 
-export const extractCoordinates = (rawPayload: any): { latitude?: number; longitude?: number; status?: string } => {
-  // If no payload provided, return empty status
+export function extractCoordinates(rawPayload: any): { latitude?: number; longitude?: number; status?: string } {
+  // If no payload, return empty result
   if (!rawPayload) {
-    return { status: 'empty' };
+    return { status: 'no-payload' };
   }
   
   try {
-    // Handle string JSON if needed
-    let payload = rawPayload;
-    if (typeof payload === 'string') {
+    
+    // SIMPLIFIED APPROACH: Since we know coordinates are always in raw_payload.raw_payload.latitude/longitude
+    // Let's directly navigate to that structure
+    
+    // Check if payload has raw_payload
+    if (typeof rawPayload !== 'object' || !rawPayload.raw_payload) {
+      console.warn('[extractCoordinates] No raw_payload found in first level');
+      return { status: 'missing-first-level' };
+    }
+    // console.log('extract function object', rawPayload)
+    // Get first level raw_payload
+    let firstLevelPayload = rawPayload.raw_payload;
+    
+    // If first level raw_payload is a string, try to parse it
+    if (typeof firstLevelPayload === 'string') {
       try {
-        payload = JSON.parse(payload);
+        firstLevelPayload = JSON.parse(firstLevelPayload);
       } catch (e) {
-        return { status: 'invalid' };
+        console.warn('[extractCoordinates] Failed to parse first level payload:', e);
+        return { status: 'parse-error-first-level' };
       }
     }
     
-    // IMPORTANT: The coordinates are ALWAYS in the raw_payload field
-    // We need to handle the double-nested structure: item.raw_payload.raw_payload.longitude
-    
-    // First level: Check if payload has raw_payload
-    if (typeof payload === 'object' && payload?.raw_payload) {
-      // Get first level raw_payload
-      let firstLevelPayload = payload.raw_payload;
-      
-      // If first level raw_payload is a string, try to parse it
-      if (typeof firstLevelPayload === 'string') {
-        try {
-          firstLevelPayload = JSON.parse(firstLevelPayload);
-        } catch (e) {
-          return { status: 'invalid' };
-        }
-      }
-      
-      // Second level: Check if first level payload has raw_payload
-      if (typeof firstLevelPayload === 'object' && firstLevelPayload?.raw_payload) {
-        // Get second level raw_payload
-        let secondLevelPayload = firstLevelPayload.raw_payload;
-        
-        // If second level raw_payload is a string, try to parse it
-        if (typeof secondLevelPayload === 'string') {
-          try {
-            secondLevelPayload = JSON.parse(secondLevelPayload);
-          } catch (e) {
-            return { status: 'invalid' };
-          }
-        }
-        
-        // Use the second level payload for coordinates
-        payload = secondLevelPayload;
-      } else {
-        // If no second level, use the first level
-        payload = firstLevelPayload;
-      }
-    } else {
-      return { status: 'empty' };
+    // Check if first level payload has raw_payload
+    if (typeof firstLevelPayload !== 'object' || !firstLevelPayload.raw_payload) {
+      // console.warn('[extractCoordinates] No raw_payload found in second level');
+      return { status: 'missing-second-level' };
     }
     
-    // Only continue if payload is an object
-    if (typeof payload !== 'object' || payload === null) {
-      return { status: 'invalid' };
+    // Get second level raw_payload
+    let secondLevelPayload = firstLevelPayload.raw_payload;
+    
+    // If second level raw_payload is a string, try to parse it
+    if (typeof secondLevelPayload === 'string') {
+      try {
+        secondLevelPayload = JSON.parse(secondLevelPayload);
+      } catch (e) {
+        // console.warn('[extractCoordinates] Failed to parse second level payload:', e);
+        return { status: 'parse-error-second-level' };
+      }
     }
     
-    // Check for common coordinate field patterns
-    const coordFields = ['latitude', 'Latitude', 'lat', 'longitude', 'Longitude', 'lng', 'location', 'Location', 'coordinates', 'Coordinates'];
-    const availableFields = coordFields.filter(field => field in payload);
+    // Check if coordinates exist in second level raw_payload
+    if (typeof secondLevelPayload !== 'object') {
+      // console.warn('[extractCoordinates] Second level payload is not an object');
+      return { status: 'invalid-second-level' };
+    }
     
-    // Extract coordinates using various possible property names
-    const lat = parseFloat(String(
-      payload.latitude || 
-      payload.Latitude || 
-      payload.lat || 
-      (payload.location && payload.location.lat) ||
-      (payload.Location && payload.Location.lat) ||
-      (payload.coordinates && payload.coordinates[0]) ||
-      ''
-    ));
+    // Check for empty strings explicitly
+    if (secondLevelPayload.latitude === '' || secondLevelPayload.longitude === '') {
+      // console.warn('[extractCoordinates] Empty string coordinates detected');
+      return { status: 'empty-string-coordinates' };
+    }
     
-    const lng = parseFloat(String(
-      payload.longitude || 
-      payload.Longitude || 
-      payload.lng || 
-      (payload.location && payload.location.lng) ||
-      (payload.Location && payload.Location.lng) ||
-      (payload.coordinates && payload.coordinates[1]) ||
-      ''
-    ));
-    
-    // Extract and parse coordinate values
-    
+    // Extract latitude and longitude
+    const lat = parseFloat(String(secondLevelPayload.latitude || ''));
+    const lng = parseFloat(String(secondLevelPayload.longitude || ''));
+    console.log('extracted coord in function', lat, lng, secondLevelPayload, firstLevelPayload)
     // Validate coordinates
     if (isNaN(lat) || isNaN(lng)) {
-      return { status: 'invalid' };
+      console.warn('[extractCoordinates] Invalid coordinates:', { lat, lng, rawLat: secondLevelPayload.latitude, rawLng: secondLevelPayload.longitude });
+      return { status: 'invalid-coordinates' };
     }
     
     if (lat < -90 || lat > 90) {
-      return { status: 'invalid' };
+      console.warn('[extractCoordinates] Latitude out of range:', lat);
+      return { status: 'invalid-latitude-range' };
     }
     
     if (lng < -180 || lng > 180) {
-      return { status: 'invalid' };
+      console.warn('[extractCoordinates] Longitude out of range:', lng);
+      return { status: 'invalid-longitude-range' };
     }
     
+    // Skip 0,0 coordinates as they're likely invalid/default values
     if (lat === 0 && lng === 0) {
-      return { status: 'invalid' };
+      console.warn('[extractCoordinates] Zero coordinates detected');
+      return { status: 'zero-coordinates' };
     }
     
+    // Valid coordinates found
+    console.log('[extractCoordinates] Found valid coordinates:', { latitude: lat, longitude: lng });
     return { latitude: lat, longitude: lng };
   } catch (error) {
+    console.error('[extractCoordinates] Error processing coordinates:', error);
+    return { status: 'exception' };
+  }
+}
+
+/**
+ * Helper function to extract coordinates from an object
+ */
+const extractCoordsFromObject = (obj: any): { latitude?: number; longitude?: number; status?: string } => {
+  if (!obj || typeof obj !== 'object') {
     return { status: 'invalid' };
   }
+  
+  // Extract coordinates using various possible property names
+  const lat = parseFloat(String(
+    obj.latitude || 
+    obj.Latitude || 
+    obj.lat || 
+    (obj.location && obj.location.lat) ||
+    (obj.Location && obj.Location.lat) ||
+    (obj.coordinates && obj.coordinates[0]) ||
+    (obj.geo && obj.geo.latitude) ||
+    (obj.geo && obj.geo.lat) ||
+    ''
+  ));
+  
+  const lng = parseFloat(String(
+    obj.longitude || 
+    obj.Longitude || 
+    obj.lng || 
+    (obj.location && obj.location.lng) ||
+    (obj.Location && obj.Location.lng) ||
+    (obj.coordinates && obj.coordinates[1]) ||
+    (obj.geo && obj.geo.longitude) ||
+    (obj.geo && obj.geo.lng) ||
+    ''
+  ));
+  
+  // Validate coordinates
+  if (isNaN(lat) || isNaN(lng)) {
+    return { status: 'invalid' };
+  }
+  
+  if (lat < -90 || lat > 90) {
+    return { status: 'invalid' };
+  }
+  
+  if (lng < -180 || lng > 180) {
+    return { status: 'invalid' };
+  }
+  
+  // Skip 0,0 coordinates as they're likely invalid/default values
+  if (lat === 0 && lng === 0) {
+    return { status: 'invalid' };
+  }
+  
+  return { latitude: lat, longitude: lng };
 };
 
 /**
@@ -200,6 +237,14 @@ export const extractEntityName = (
   entityType: 'ahj' | 'utility' | 'financier'
 ): string => {
   try {
+    // Log entity structure for debugging - safe logging to avoid serialization errors
+    // console.log(`[extractEntityName] Extracting name for ${entityType}:`, {
+    //   keys: entity ? Object.keys(entity) : 'null entity',
+    //   hasRawPayload: entity && entity.raw_payload ? true : false,
+    //   rawPayloadType: entity && entity.raw_payload ? typeof entity.raw_payload : 'none',
+    //   entityType
+    // });
+    
     if (entityType === 'ahj') {
       // AHJ names are stored in raw_payload.raw_payload.name
       return (entity.raw_payload && 
@@ -208,10 +253,55 @@ export const extractEntityName = (
               typeof entity.raw_payload.raw_payload === 'object' ? 
                 entity.raw_payload.raw_payload.name : null) || 
                 entity.name || 
+                entity.ahj_name ||
+                entity.authority_having_jurisdiction ||
                 `Unknown AHJ`;
+    } else if (entityType === 'utility') {
+      // Try multiple possible field names for utility name
+      const name = entity.company_name || 
+                  entity.name || 
+                  entity.utility_name ||
+                  entity.utility_company_name ||
+                  entity.company ||
+                  // Try to extract from raw_payload
+                  (entity.raw_payload && typeof entity.raw_payload === 'object' ? 
+                    (entity.raw_payload.company_name || 
+                     entity.raw_payload.name || 
+                     entity.raw_payload.utility_name) : null);
+      
+      // If we found a name, return it
+      if (name) return name;
+      
+      // If we still don't have a name, try to extract from nested structures
+      if (entity.raw_payload && typeof entity.raw_payload === 'object') {
+        // Try first level
+        const firstLevel = entity.raw_payload;
+        
+        // If first level has raw_payload, try that too
+        if (firstLevel.raw_payload && typeof firstLevel.raw_payload === 'object') {
+          const secondLevel = firstLevel.raw_payload;
+          return secondLevel.company_name || 
+                 secondLevel.name || 
+                 secondLevel.utility_name ||
+                 firstLevel.company_name ||
+                 firstLevel.name ||
+                 firstLevel.utility_name ||
+                 `Unknown Utility`;
+        }
+        
+        return firstLevel.company_name || 
+               firstLevel.name || 
+               firstLevel.utility_name ||
+               `Unknown Utility`;
+      }
+      
+      return `Unknown Utility`;
     } else {
-      // Utility and Financier names are stored in company_name
-      return entity.company_name || `Unknown ${entityType.charAt(0).toUpperCase() + entityType.slice(1)}`;
+      // Financier names
+      return entity.company_name || 
+             entity.name || 
+             entity.financier_name ||
+             `Unknown ${entityType.charAt(0).toUpperCase() + entityType.slice(1)}`;
     }
   } catch (error) {
     return `Unknown ${entityType.charAt(0).toUpperCase() + entityType.slice(1)}`;
