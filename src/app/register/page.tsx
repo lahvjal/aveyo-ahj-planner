@@ -13,7 +13,6 @@ export default function RegisterPage() {
   const [salesRepId, setSalesRepId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [validSalesRepIds, setValidSalesRepIds] = useState<string[]>([]);
   const { user } = useAuth();
   const router = useRouter();
 
@@ -24,33 +23,26 @@ export default function RegisterPage() {
     }
   }, [user, router]);
 
-  // Fetch valid sales rep IDs from the dedicated sales_reps table
-  useEffect(() => {
-    const fetchValidSalesRepIds = async () => {
-      try {
-        // Get all active sales rep IDs from the sales_reps table
-        // Note: 'active' column contains 'Active' (capital A) based on the database
-        const { data, error } = await supabase
-          .from('sales_reps')
-          .select('rep_id')
-          .eq('active', 'Active');
-
-        if (error) {
-          console.error('Error fetching sales rep IDs:', error);
-          return;
-        }
-
-        // Extract the rep_id values
-        const repIds = data.map(item => item.rep_id);
-        setValidSalesRepIds(repIds);
-        console.log('Valid sales rep IDs:', repIds);
-      } catch (err) {
-        console.error('Error in fetchValidSalesRepIds:', err);
+  // Server-side validation helper function
+  const validateSalesRepId = async (id: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/validate-rep-id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salesRepId: id })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Server validation failed');
       }
-    };
-
-    fetchValidSalesRepIds();
-  }, []);
+      
+      const result = await response.json();
+      return result.valid;
+    } catch (err) {
+      console.error('Error validating sales rep ID:', err);
+      return false;
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,27 +68,21 @@ export default function RegisterPage() {
       return;
     }
 
-    // Validate sales rep ID against our list of valid IDs
-    console.log('Validating rep ID:', salesRepId);
-    console.log('Valid rep IDs:', validSalesRepIds);
-    
-    if (validSalesRepIds.length === 0) {
-      // If we couldn't fetch valid rep IDs, skip this validation
-      console.log('Skipping rep ID validation as no valid IDs were fetched');
-    } else {
-      // Check if the rep ID exists in the list of valid IDs
-      // Convert to string for comparison since the database might store them as strings
+    // Validate sales rep ID using server-side validation
+    try {
       const salesRepIdStr = String(salesRepId).trim();
-      const isValid = validSalesRepIds.some(id => String(id).trim() === salesRepIdStr);
-      
-      console.log('Rep ID after conversion:', salesRepIdStr);
-      console.log('Is rep ID valid?', isValid);
+      const isValid = await validateSalesRepId(salesRepIdStr);
       
       if (!isValid) {
         setError('Invalid Sales Rep ID. Please check and try again.');
         setIsLoading(false);
         return;
       }
+    } catch (err) {
+      console.error('Error validating sales rep ID:', err);
+      setError('An error occurred while validating your Sales Rep ID. Please try again.');
+      setIsLoading(false);
+      return;
     }
     
     // Check if the rep ID is already linked to an existing account

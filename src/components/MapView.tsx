@@ -59,7 +59,8 @@ const MapView: React.FC<MapViewProps> = ({
     showOnlyMyProjects,
     toggleShowOnlyMyProjects,
     show45DayQualified,
-    set45DayFilter
+    set45DayFilter,
+    userLocation // Add userLocation from DataContext
   } = useData();
   
   // Auth context for user information
@@ -76,7 +77,6 @@ const MapView: React.FC<MapViewProps> = ({
   const ahjMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const utilityMarkersRef = useRef<mapboxgl.Marker[]>([]);
   // Removed cardListRef as we no longer need project cards
-  // console.log('markers', projectMarkersRef.current, ahjMarkersRef.current, utilityMarkersRef.current);
   //==========================================================================
   // STATE
   //==========================================================================
@@ -261,6 +261,87 @@ const MapView: React.FC<MapViewProps> = ({
     updateVisibleProjects(mapRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, mapLoaded]);
+  
+  /**
+   * Focus map on user location or fit all visible pins
+   * - When no filters are active: Center on user's location
+   * - When filters are active: Adjust zoom to fit all visible pins
+   */
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    const map = mapRef.current;
+    const hasFilters = filters.filters.length > 0;
+    
+    // Get all visible markers (projects, AHJs, utilities)
+    const getVisibleMarkers = (): Array<{lng: number, lat: number}> => {
+      const markers: Array<{lng: number, lat: number}> = [];
+      
+      // Add visible project markers
+      visibleProjects.forEach(project => {
+        if (project.latitude && project.longitude) {
+          markers.push({ lng: project.longitude, lat: project.latitude });
+        }
+      });
+      
+      // Add visible AHJ markers
+      if (ahjMarkersRef.current.length > 0) {
+        ahjMarkersRef.current.forEach(marker => {
+          const lngLat = marker.getLngLat();
+          markers.push({ lng: lngLat.lng, lat: lngLat.lat });
+        });
+      }
+      
+      // Add visible utility markers
+      if (utilityMarkersRef.current.length > 0) {
+        utilityMarkersRef.current.forEach(marker => {
+          const lngLat = marker.getLngLat();
+          markers.push({ lng: lngLat.lng, lat: lngLat.lat });
+        });
+      }
+      
+      return markers;
+    };
+    
+    // Fit map to bounds of visible markers
+    const fitMapToBounds = (markers: Array<{lng: number, lat: number}>) => {
+      if (markers.length === 0) return;
+      
+      // Create a bounds object
+      const bounds = new mapboxgl.LngLatBounds();
+      
+      // Extend the bounds to include each marker
+      markers.forEach(marker => {
+        bounds.extend([marker.lng, marker.lat]);
+      });
+      
+      // Fit the map to the bounds with some padding
+      map.fitBounds(bounds, {
+        padding: 50,
+        maxZoom: 15
+      });
+      
+      console.log(`[MapView] Adjusted map to fit ${markers.length} visible markers`);
+    };
+    
+    // If we have filters, fit the map to the visible markers
+    if (hasFilters) {
+      const visibleMarkers = getVisibleMarkers();
+      if (visibleMarkers.length > 0) {
+        fitMapToBounds(visibleMarkers);
+      }
+    } 
+    // Otherwise, center on user location if available
+    else if (userLocation && userLocation.latitude && userLocation.longitude) {
+      map.flyTo({
+        center: [userLocation.longitude, userLocation.latitude],
+        zoom: 10,
+        essential: true
+      });
+      console.log('[MapView] Centered map on user location:', userLocation);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, filters.filters, userLocation, visibleProjects]);
 
   /**
    * Update visible projects once when the map loads
@@ -281,7 +362,6 @@ const MapView: React.FC<MapViewProps> = ({
     
     // Set all projects as visible initially instead of filtering by bounds
     setVisibleProjects(projects);
-    // console.log('Setting all projects as visible:', projects.length);
     
     // Cleanup
     return () => {
@@ -289,6 +369,30 @@ const MapView: React.FC<MapViewProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapLoaded, projects]);
+  
+  /**
+   * Create entity markers (AHJs and Utilities) when filters change, map loads, or entity data changes
+   */
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    
+    const map = mapRef.current;
+    console.log('[MapView] Creating entity markers based on filters:', filters.filters);
+    
+    // Create AHJ markers if we have AHJ data
+    if (ahjs && ahjs.length > 0) {
+      console.log(`[MapView] Creating AHJ markers (${ahjs.length} total, ${ahjs.filter(a => a.latitude && a.longitude).length} with coordinates)`);
+      createEntityMarkers(ahjs, 'ahj', map);
+    }
+    
+    // Create Utility markers if we have utility data
+    if (utilities && utilities.length > 0) {
+      console.log(`[MapView] Creating Utility markers (${utilities.length} total, ${utilities.filter(u => u.latitude && u.longitude).length} with coordinates)`);
+      createEntityMarkers(utilities, 'utility', map);
+    }
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, filters.filters, ahjs, utilities]);
 
   //==========================================================================
   // MARKER CREATION AND MANAGEMENT
@@ -354,19 +458,24 @@ const MapView: React.FC<MapViewProps> = ({
     
     // Create pulsing effect for each entity that should be shown
     entitiesToShow.forEach(entity => {
-      // Determine color based on entity type
-      const pulseColor = entityType === 'ahj' ? '#87CEFA' : '#FFFF00'; // Light blue for AHJs, yellow for utilities
+      // Determine SVG file and styling based on entity type
+      const pinSvgPath = entityType === 'ahj' ? '/ahj_pin.svg' : '/utility_pin.svg';
       
-      // Create a ping ripple element
+      // Create a marker element
       const el = document.createElement('div');
-      el.className = `${entityType}-pulse-marker`;
+      el.className = `${entityType}-marker`;
       
-      // Don't override the CSS size here since we're using the CSS classes
-      // The ping ripple effect is controlled by the CSS
+      // Apply SVG background image
+      el.style.backgroundImage = `url(${pinSvgPath})`;
+      el.style.backgroundSize = 'contain';
+      el.style.backgroundRepeat = 'no-repeat';
+      el.style.backgroundPosition = 'center';
+      el.style.width = '30px';
+      el.style.height = '30px';
       
       // Highlight selected entities
       if (selectedEntityIds.includes(entity.id)) {
-        el.style.border = '2px solid white';
+        el.style.filter = 'drop-shadow(0 0 5px white)';
         el.style.zIndex = '6'; // Make selected entities appear above others
       }
       
@@ -423,19 +532,40 @@ const MapView: React.FC<MapViewProps> = ({
    * Used for projects that should have their exact location partially obscured
    */
   const createMaskedProjectPin = (project: Project, map: mapboxgl.Map) => {
-    // console.log('Creating MASKED pin for project:', project.id, project.address);
-    
-    // For masked projects, use a grey pin with reduced opacity
     const el = document.createElement('div');
     el.className = 'masked-marker';
-    el.style.backgroundImage = 'url(/pin_grey.svg)';
-    el.style.width = '18px'; // Slightly smaller than active projects
+    
+    // Check if project belongs to the current user
+    const isUserProject = project.rep_id === userProfile?.rep_id;
+    
+    // Use blue pin for user's projects, grey for others
+    const pinImage = isUserProject ? '/pin_blue_active.svg' : '/pin_grey.svg';
+    el.style.backgroundImage = `url(${pinImage})`;
+    
+    // Size and styling
+    el.style.width = '18px'; // Slightly smaller than standard projects
     el.style.height = '18px';
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
-    el.style.opacity = '0'; // More transparent for masked projects
-    el.style.zIndex = '5'; // Below active projects
+    
+    // Opacity - user's projects are more visible, others are more masked
+    el.style.opacity = isUserProject ? '0.9' : '0.5';
+    el.style.zIndex = isUserProject ? '7' : '5'; // User's projects appear above others
+    
+    try {
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([project.longitude!, project.latitude!])
+        .addTo(map);
+      
+      marker.getElement().addEventListener('click', () => {
+        handleProjectSelect(project);
+      });
+      
+      projectMarkersRef.current.push(marker);
+    } catch (error) {
+      console.error('Error creating masked marker:', error);
+    }
   };
   
   /**
@@ -443,18 +573,25 @@ const MapView: React.FC<MapViewProps> = ({
    * Used for completed projects or those assigned to the current user
    */
   const createStandardProjectPin = (project: Project, map: mapboxgl.Map) => {
-    // console.log('Creating STANDARD pin for project:', project.id, project.address);
     
-    // For unmasked projects, use pin_green_active.svg
+    // Create marker element
     const el = document.createElement('div');
     el.className = 'marker';
-    el.style.backgroundImage = 'url(/pin_grey_active.svg)';
+    
+    // Check if project belongs to the current user
+    const isUserProject = project.rep_id === userProfile?.rep_id;
+    
+    // Use blue pin for user's projects, grey for others
+    const pinImage = isUserProject ? '/pin_blue_active.svg' : '/pin_grey_active.svg';
+    el.style.backgroundImage = `url(${pinImage})`;
+    
+    // Size and styling
     el.style.width = '25px';
     el.style.height = '25px';
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
-    el.style.zIndex = '10'; // Ensure project pins are above entity markers
+    el.style.zIndex = isUserProject ? '12' : '10'; // User's projects appear above others
     
     // Highlight selected project
     if (selectedProject && project.id === selectedProject.id) {
@@ -473,7 +610,6 @@ const MapView: React.FC<MapViewProps> = ({
       });
       
       projectMarkersRef.current.push(marker);
-      // console.log('Successfully added standard marker to map, total markers:', projectMarkersRef.current.length);
     } catch (error) {
       console.error('Error creating standard marker:', error);
     }
@@ -489,9 +625,6 @@ const MapView: React.FC<MapViewProps> = ({
     
     // Skip if we don't have any data yet (waiting for server data)
     if (projects.length === 0 && ahjs.length === 0 && utilities.length === 0) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[MapView] Skipping marker update - no data available yet');
-      }
       return;
     }
     
@@ -501,16 +634,6 @@ const MapView: React.FC<MapViewProps> = ({
     
     // Use all projects instead of just visible ones
     const projectsToShow = projects;
-    
-    // Check if any projects have coordinates
-    const projectsWithCoords = projectsToShow.filter(p => p.latitude && p.longitude);
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[MapView] Rendering projects:', {
-        total: projectsToShow.length,
-        withCoordinates: projectsWithCoords.length
-      });
-    }
     
     // Clear existing project markers
     projectMarkersRef.current.forEach(marker => marker.remove());
@@ -541,7 +664,6 @@ const MapView: React.FC<MapViewProps> = ({
       }
     });
     
-    // console.log('Finished creating/updating all markers, total:', projectMarkersRef.current.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapLoaded, projects]);
 

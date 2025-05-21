@@ -138,15 +138,50 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   
   // Function to get user location directly in the DataContext
   const getUserLocation = useCallback(() => {
-    // For testing purposes, use a fixed location (Orem, Utah)
-    // In production, this would use the browser's geolocation API
-    const testLocation = {
-      latitude: 40.2969,
-      longitude: -111.6946
-    };
-    
-    // console.log('[DataContext] Setting test location:', testLocation);
-    setUserLocation(testLocation);
+    // Use browser's geolocation API to get user's current location
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      // Show loading state while getting location
+      console.log('[DataContext] Getting user location...');
+      
+      navigator.geolocation.getCurrentPosition(
+        // Success callback
+        (position) => {
+          const userCoords = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          };
+          console.log('[DataContext] User location obtained:', userCoords);
+          setUserLocation(userCoords);
+        },
+        // Error callback
+        (error) => {
+          console.error('[DataContext] Geolocation error:', error.message);
+          // Fallback to a default location (Orem, Utah) if geolocation fails
+          const fallbackLocation = {
+            latitude: 40.2969,
+            longitude: -111.6946
+          };
+          console.log('[DataContext] Using fallback location:', fallbackLocation);
+          setUserLocation(fallbackLocation);
+        },
+        // Options
+        {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 0
+        }
+      );
+    } else {
+      // Browser doesn't support geolocation
+      console.warn('[DataContext] Geolocation not supported by this browser');
+      // Use fallback location
+      const fallbackLocation = {
+        latitude: 40.2969,
+        longitude: -111.6946
+      };
+      console.log('[DataContext] Using fallback location:', fallbackLocation);
+      setUserLocation(fallbackLocation);
+    }
   }, []);
 
   // Filter state
@@ -362,9 +397,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         coordStatus
       };
     }).filter(ahj => {
-      // Log AHJs that would be filtered out for debugging
       if (!ahj.id) {
-        console.warn('[DataContext] AHJ filtered out due to missing ID:', ahj);
         return false;
       }
       return true;
@@ -406,9 +439,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         coordStatus
       };
     }).filter(utility => {
-      // Log utilities that would be filtered out for debugging
       if (!utility.id) {
-        console.warn('[DataContext] Utility filtered out due to missing ID:', utility);
         return false;
       }
       return true;
@@ -423,16 +454,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (rawData.isLoading || rawData.projects.length === 0) {
       return { projects: [], ahjs: [], utilities: [], financiers: [] };
     }
-    
-    // Log processed entities for debugging
-    console.log('[DataContext] Processed entities before filtering:', {
-      processedAhjsCount: processedEntities.ahjs.length,
-      processedUtilitiesCount: processedEntities.utilities.length,
-      ahjsWithCoordinates: processedEntities.ahjs.filter(ahj => ahj.latitude && ahj.longitude).length,
-      utilitiesWithCoordinates: processedEntities.utilities.filter(utility => utility.latitude && utility.longitude).length,
-      sampleAhj: processedEntities.ahjs.length > 0 ? processedEntities.ahjs[0] : null,
-      sampleUtility: processedEntities.utilities.length > 0 ? processedEntities.utilities[0] : null
-    });
 
     // Extract coordinates for all projects
     let filteredProjects = rawData.projects.map(project => {
@@ -918,7 +939,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
     
     // Log final entity data to see how project counts are passed
-    // console.log('PROJECT COUNT: Final entity data after calculation:');
     if (filteredAhjs.length > 0) {
       const sampleAhj = filteredAhjs[0];
     }
@@ -942,7 +962,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ahj.latitude,
             ahj.longitude
           );
-          console.log('distance for ahj:', ahj.name, distance);
         }
         
         // Always calculate project count regardless of coordinate validity
@@ -953,10 +972,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Calculate distances for Utilities
       filteredUtilities = filteredUtilities.map(utility => {
         let distance = Infinity;
-        console.log('filteredUtilities:', filteredUtilities);
         // Only calculate distance if coordinates are valid
         if (utility.latitude && utility.longitude && utility.coordStatus === 'valid') {
-          console.log('utility with VALID coordinates:', utility.latitude, utility.longitude);
           distance = calculateDistance(
             userLocation.latitude,
             userLocation.longitude,
@@ -1062,9 +1079,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       utilities: filteredUtilities,
       financiers: rawData.financiers // Financiers might not need filtering
     };
-    
-    // Log AHJs that will be sent to EntityListView
-    console.log('[DataContext] AHJs sent to EntityListView:', { count: filteredAhjs.length, withCoordinates: filteredAhjs.filter(ahj => ahj.latitude && ahj.longitude).length, sample: filteredAhjs.slice(0, 3) });
     
     // Return the final filtered data
     return finalFilteredData;
