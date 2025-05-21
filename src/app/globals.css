@@ -13,6 +13,15 @@
   grid-template-columns: 4fr 2fr 1fr 2fr;
 }
 
+/* Map popup z-index to ensure they appear above all other elements */
+.map-popup-highest-z {
+  z-index: 30 !important;
+}
+
+.mapboxgl-popup {
+  z-index: 30 !important;
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

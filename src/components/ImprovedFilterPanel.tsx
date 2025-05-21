@@ -15,6 +15,24 @@ interface ImprovedFilterPanelExtendedProps extends ImprovedFilterPanelProps {
   isMobile?: boolean;
 }
 
+  /**
+   * The ImprovedFilterPanel component displays a panel of filters that can be used to
+   * filter the projects list. It includes a search bar, a list of active filters, and a
+   * collapsible section for each filter type (utility, ahj, etc.). The component is
+   * responsive, meaning it will adjust its layout based on the screen size.
+   * 
+   * @prop {Object} filters - An object containing an array of active filters
+   * @prop {Function} addFilter - A function to add a new filter
+   * @prop {Function} removeFilter - A function to remove a filter
+   * @prop {Function} clearFilters - A function to clear all filters
+   * @prop {Function} onSearch - A function to search for projects
+   * @prop {string} searchTerms - The current search terms
+   * @prop {boolean} showOnlyMyProjects - Whether to show only the user's projects
+   * @prop {Function} toggleShowOnlyMyProjects - A function to toggle the showOnlyMyProjects flag
+   * @prop {boolean} isCollapsed - Whether the panel is collapsed
+   * @prop {Function} onToggleCollapse - A function to toggle the collapsed state
+   * @prop {boolean} isMobile - Whether the panel is being rendered on a mobile device
+   */
 const ImprovedFilterPanel: React.FC<ImprovedFilterPanelExtendedProps> = ({
   filters,
   addFilter,
@@ -177,7 +195,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelExtendedProps> = ({
             height={40}
             className="mr-2"
           />
-          <h1 className="text-xl font-bold">AHJ Knock Planner</h1>
+          <h1 className="text-xl font-bold">My Aveyo</h1>
         </div>
         
         {/* Close button only on mobile */}

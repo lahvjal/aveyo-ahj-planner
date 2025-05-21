@@ -9,7 +9,7 @@ interface MobileHeaderProps {
 }
 
 const MobileHeader: React.FC<MobileHeaderProps> = ({ 
-  title = 'Aveyo AHJ Planner',
+  title = 'My Aveyo',
   onLogout
 }) => {
   const { signOut } = useAuth();
@@ -32,7 +32,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           height={30}
           className="mr-2"
         />
-        <h1 className="text-lg font-medium text-white">{title}</h1>
+        <h1 className="text-lg font-medium text-white">My Aveyo</h1>
       </div>
       <div className="flex items-center">
         <button 

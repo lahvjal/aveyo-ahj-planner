@@ -476,7 +476,9 @@ const MapView: React.FC<MapViewProps> = ({
       // Highlight selected entities
       if (selectedEntityIds.includes(entity.id)) {
         el.style.filter = 'drop-shadow(0 0 5px white)';
-        el.style.zIndex = '6'; // Make selected entities appear above others
+        el.style.zIndex = '20'; // Selected entities should be above regular entities
+      } else {
+        el.style.zIndex = '15'; // Entity pins should be in the middle layer
       }
       
       // Add tooltip with entity name
@@ -486,7 +488,8 @@ const MapView: React.FC<MapViewProps> = ({
       const popup = new mapboxgl.Popup({
         closeButton: false,
         closeOnClick: false,
-        offset: 25
+        offset: 25,
+        className: 'map-popup-highest-z' // Add a class for custom CSS
       }).setHTML(`<div class="p-2 bg-gray-800 rounded shadow-lg">
         <div class="font-medium text-white">${entity.name}</div>
         <div class="text-xs text-gray-300">${entityType.toUpperCase()}</div>
@@ -576,7 +579,7 @@ const MapView: React.FC<MapViewProps> = ({
     
     // Opacity - user's projects are visible, others are completely masked (invisible)
     el.style.opacity = isUserProject ? '0.9' : '0';
-    el.style.zIndex = isUserProject ? '7' : '1'; // User's projects appear above others
+    el.style.zIndex = isUserProject ? '5' : '1'; // Project pins should be at the bottom layer
     
     try {
       // Get coordinates (randomized for non-user projects)
@@ -623,7 +626,7 @@ const MapView: React.FC<MapViewProps> = ({
     el.style.backgroundSize = 'contain';
     el.style.backgroundRepeat = 'no-repeat';
     el.style.backgroundPosition = 'center';
-    el.style.zIndex = isUserProject ? '12' : '10'; // User's projects appear above others
+    el.style.zIndex = isUserProject ? '5' : '4'; // Project pins should be at the bottom layer
     
     // Highlight selected project
     if (selectedProject && project.id === selectedProject.id) {
