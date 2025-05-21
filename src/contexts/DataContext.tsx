@@ -386,7 +386,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const classification = extractClassification(rawClassification);
       
       // Extract coordinates with status
-      const coordinates = extractCoordinates(utility.coordinates || utility.raw_payload);
+      const coordinates = extractCoordinates(utility.raw);
       
       // Determine coordinate status
       // If latitude and longitude are present, it's valid
@@ -934,7 +934,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Calculate distances for AHJs
       filteredAhjs = filteredAhjs.map(ahj => {
         let distance = Infinity;
-        
         // Only calculate distance if coordinates are valid
         if (ahj.latitude && ahj.longitude && ahj.coordStatus === 'valid') {
           distance = calculateDistance(
@@ -943,6 +942,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ahj.latitude,
             ahj.longitude
           );
+          console.log('distance for ahj:', ahj.name, distance);
         }
         
         // Always calculate project count regardless of coordinate validity
@@ -953,9 +953,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Calculate distances for Utilities
       filteredUtilities = filteredUtilities.map(utility => {
         let distance = Infinity;
-        
+        console.log('filteredUtilities:', filteredUtilities);
         // Only calculate distance if coordinates are valid
         if (utility.latitude && utility.longitude && utility.coordStatus === 'valid') {
+          console.log('utility with VALID coordinates:', utility.latitude, utility.longitude);
           distance = calculateDistance(
             userLocation.latitude,
             userLocation.longitude,

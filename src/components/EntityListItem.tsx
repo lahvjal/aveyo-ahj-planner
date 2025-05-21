@@ -31,13 +31,6 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
   React.useEffect(() => {
     if (entity.id === 'first-entity-logged') return; // Skip if already logged
     
-    // console.log(`PROJECT COUNT UI: Rendering ${entityType} entity:`, {
-    //   id: entity.id,
-    //   name: entity.name,
-    //   projectCount: entity.projectCount,
-    //   relatedCount: entityType === 'ahj' ? entity.relatedUtilityCount : entity.relatedAhjCount
-    // });
-    
     // Mark as logged to prevent repeated logging
     Object.defineProperty(entity, 'id', {
       value: entity.id,
@@ -45,8 +38,7 @@ const EntityListItem: React.FC<EntityListItemProps> = ({
       configurable: false
     });
   }, [entity, entityType]);
-  // No debug logging needed
-  // console.log('ENTITY DATA:', entity);
+  
   return (
     <div 
       className={`grid-cols-5-new hover:bg-[#1e1e1e] cursor-pointer ${

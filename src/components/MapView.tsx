@@ -62,9 +62,6 @@ const MapView: React.FC<MapViewProps> = ({
     set45DayFilter
   } = useData();
   
-  // Log the projects data from DataContext
-  // console.log('projects', projects);
-  
   // Auth context for user information
   const { userProfile, isAdmin } = useAuth();
   
@@ -186,165 +183,41 @@ const MapView: React.FC<MapViewProps> = ({
    * Sets up the Mapbox GL map with controls, event handlers, and initial view
    */
   useEffect(() => {
-    if (!mapContainer.current) return; // No container to render into
+    // Skip map initialization if no container or mapbox not loaded
+    if (!mapContainer.current || !mapboxgl) return;
     
-    // Get Mapbox token
-    const token = getMapboxToken();
-    if (!token) {
-      console.error('No Mapbox token found');
-      return;
-    }
+    // Skip if map is already initialized
+    if (mapRef.current) return;
     
-    // Set Mapbox token
-    mapboxgl.accessToken = token;
+    // Set mapbox token
+    mapboxgl.accessToken = getMapboxToken();
     
-    /**
-     * Initialize the map with configuration and event handlers
-     */
-    const initializeMap = () => {
-      // Create map instance
-      const map = new mapboxgl.Map({
-        container: mapContainer.current!,
-        style: 'mapbox://styles/mapbox/dark-v11', // Dark theme
-        center: [lng, lat],
-        zoom: zoom,
-        maxBounds: [
-          [-180, -85], // Southwest coordinates
-          [180, 85]    // Northeast coordinates
-        ],
-        projection: {
-          name: 'mercator',
-          center: [-95.7129, 37.0902]
-        },
-        minZoom: 2 // Prevent zooming out too far
-      });
-      
-      // Save map reference
-      mapRef.current = map;
-      
-      // Add navigation controls (zoom in/out)
-      map.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      
-      // Add geolocate control and trigger it automatically
-      const geolocateControl = new mapboxgl.GeolocateControl({
-        positionOptions: {
-          enableHighAccuracy: true
-        },
-        trackUserLocation: true,
-        showUserHeading: true
-      });
-      
-      map.addControl(geolocateControl, 'top-right');
-      
-      /**
-       * Map load event handler
-       * Sets up initial view and configurations once the map is loaded
-       */
-      map.on('load', () => {
-        setMapLoaded(true);
-        
-        // Force a resize after load to fix any sizing issues
-        setTimeout(() => {
-          try {
-            map.resize();
-          } catch (error) {
-            // Silent error handling for map resize
-          }
-        }, 200);
-        
-        /**
-         * Find nearby projects and center the map view
-         * Uses user location and project coordinates to create an optimal view
-         */
-        setTimeout(() => {
-          try {
-            // Get user's location from the map if available
-            const userLocation = mapRef.current?.getCenter();
-            
-            if (userLocation && projects.length > 0) {
-              const projectsWithDistance = projects
-                .filter(project => project.latitude && project.longitude)
-                .map(project => {
-                  const distance = calculateDistance(
-                    userLocation.lat,
-                    userLocation.lng,
-                    project.latitude!,
-                    project.longitude!
-                  );
-                  return { project, distance };
-                })
-                .sort((a, b) => a.distance - b.distance)
-                .slice(0, 5);
-              
-              if (projectsWithDistance.length === 0) return;
-              
-              // Create a bounds object to encompass all nearby projects and user location
-              const bounds = new mapboxgl.LngLatBounds();
-              
-              // Add user location to bounds
-              bounds.extend([userLocation.lng, userLocation.lat]);
-              
-              // Add each project's coordinates to the bounds
-              projectsWithDistance.forEach(({ project }) => {
-                bounds.extend([project.longitude!, project.latitude!]);
-              });
-              
-              // Fit the map to the bounds with padding - only during initial setup
-              if (allowMapMovement.initial) {
-                map.fitBounds(bounds, {
-                  padding: 100,
-                  maxZoom: 12
-                });
-                
-                // Disable initial movement after first use
-                setAllowMapMovement(prev => ({ ...prev, initial: false }));
-              }
-            }
-          } catch (error) {
-            // Silent error handling for location processing
-          }
-        }, 1000); // Short delay to ensure map is fully loaded
-        
-        /**
-         * Zoom event handler
-         * Controls visibility of map labels based on zoom level
-         */
-        map.on('zoom', () => {
-          const zoom = map.getZoom();
-          const showLabels = zoom >= 10;
-          const visibility = showLabels ? 'visible' : 'none';
-          
-          // Check if layers exist before trying to modify them
-          const layers = ['settlement-label', 'settlement-minor-label', 'settlement-major-label', 'place-label'];
-          
-          layers.forEach(layer => {
-            try {
-              if (map.getLayer(layer)) {
-                map.setLayoutProperty(layer, 'visibility', visibility);
-              }
-            } catch (error) {
-              // Layer not found in map style, skipping
-            }
-          });
-        });
-      });
-      
-      // Error handler
-      map.on('error', (e: mapboxgl.ErrorEvent) => {
-        // Handle map error silently
-      });
-    };
+    // Create new map instance
+    const map = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/dark-v10',
+      center: [lng, lat],
+      zoom: zoom
+    });
     
-    // Initialize the map
-    initializeMap();
+    // Save map reference
+    mapRef.current = map;
+    
+    // Add navigation controls
+    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    
+    // Handle map load event
+    map.on('load', () => {
+      setMapLoaded(true);
+    });
     
     // Cleanup function
     return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-      }
+      // Clean up map instance when component unmounts
+      map.remove();
+      mapRef.current = null;
     };
-  }, []);
+  }, [lng, lat, zoom, projects.length, ahjs.length, utilities.length]);
 
   //==========================================================================
   // PROJECT VISIBILITY AND FILTERING
@@ -563,21 +436,6 @@ const MapView: React.FC<MapViewProps> = ({
     el.style.backgroundPosition = 'center';
     el.style.opacity = '0'; // More transparent for masked projects
     el.style.zIndex = '5'; // Below active projects
-    
-    // try {
-    //   const marker = new mapboxgl.Marker(el)
-    //     .setLngLat([project.longitude!, project.latitude!])
-    //     .addTo(map);
-      
-    //   marker.getElement().addEventListener('click', () => {
-    //     handleProjectSelect(project);
-    //   });
-      
-    //   projectMarkersRef.current.push(marker);
-    //   // console.log('Successfully added masked marker to map, total markers:', projectMarkersRef.current.length);
-    // } catch (error) {
-    //   console.error('Error creating masked marker:', error);
-    // }
   };
   
   /**
@@ -626,32 +484,37 @@ const MapView: React.FC<MapViewProps> = ({
    * Recreates markers when filters are applied
    */
   useEffect(() => {
+    // Skip if map is not loaded yet
     if (!mapRef.current || !mapLoaded) return;
     
+    // Skip if we don't have any data yet (waiting for server data)
+    if (projects.length === 0 && ahjs.length === 0 && utilities.length === 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[MapView] Skipping marker update - no data available yet');
+      }
+      return;
+    }
+    
+    // Get the map reference
     const map = mapRef.current;
-    // console.log('Map markers update triggered, projects:', projects.length);
-    
-    // Clear existing project markers whenever projects change
-    projectMarkersRef.current.forEach(marker => marker.remove());
-    projectMarkersRef.current = [];
-    
-    // Create entity markers for AHJs and utilities
-    // Only recreate these if they don't exist yet
-    if (ahjMarkersRef.current.length === 0) {
-      createEntityMarkers(ahjs, 'ahj', map);
-    }
-    
-    if (utilityMarkersRef.current.length === 0) {
-      createEntityMarkers(utilities, 'utility', map);
-    }
+    if (!map) return;
     
     // Use all projects instead of just visible ones
     const projectsToShow = projects;
-    // console.log('Projects to show after filtering:', projectsToShow.length);
     
     // Check if any projects have coordinates
     const projectsWithCoords = projectsToShow.filter(p => p.latitude && p.longitude);
-    // console.log('Projects with coordinates:', projectsWithCoords.length);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[MapView] Rendering projects:', {
+        total: projectsToShow.length,
+        withCoordinates: projectsWithCoords.length
+      });
+    }
+    
+    // Clear existing project markers
+    projectMarkersRef.current.forEach(marker => marker.remove());
+    projectMarkersRef.current = [];
     
     // Add new markers for each project
     projectsToShow.forEach(project => {
@@ -735,9 +598,9 @@ const MapView: React.FC<MapViewProps> = ({
   const hasData = projects.length > 0;
   
   /**
-   * Render loading state
+   * Render loading state - only show if we don't have any data yet
    */
-  if (isLoading) {
+  if (isLoading && (!projects || projects.length === 0) && (!ahjs || ahjs.length === 0) && (!utilities || utilities.length === 0)) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-gray-900">
         <div className="text-center">
