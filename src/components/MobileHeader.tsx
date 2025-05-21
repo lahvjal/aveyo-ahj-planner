@@ -1,4 +1,5 @@
 import React from 'react';
+import Image from 'next/image';
 import { FiLogOut } from 'react-icons/fi';
 import { useAuth } from '@/utils/AuthContext';
 
@@ -24,6 +25,13 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   return (
     <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
       <div className="flex items-center">
+        <Image
+          src="/Aveyo-social-icon-BLK.jpg"
+          alt="Aveyo Logo"
+          width={30}
+          height={30}
+          className="mr-2"
+        />
         <h1 className="text-lg font-medium text-white">{title}</h1>
       </div>
       <div className="flex items-center">

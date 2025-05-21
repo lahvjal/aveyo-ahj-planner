@@ -171,7 +171,7 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelExtendedProps> = ({
       <div className="p-4 border-b border-gray-700 flex items-center justify-between">
         <div className="flex items-center">
           <Image
-            src="/aveyo-logo.svg"
+            src="/Aveyo-social-icon-BLK.jpg"
             alt="Aveyo Logo"
             width={40}
             height={40}
