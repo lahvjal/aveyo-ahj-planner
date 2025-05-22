@@ -357,6 +357,18 @@ const ImprovedFilterPanel: React.FC<ImprovedFilterPanelExtendedProps> = ({
           45 Days to Pay Timeline
         </a>
       </div>
+      {/* Tutorial link */}
+      <div className="p-4 border-t border-gray-700">
+        <a 
+          href="https://help.myaveyo.com/ahj-utility-list" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex items-center text-blue-400 hover:text-blue-300"
+        >
+          <FiFileText className="mr-2" />
+          Tutorial
+        </a>
+      </div>
       
       {/* Logout Button */}
       <div className="p-4 border-t border-gray-700">
