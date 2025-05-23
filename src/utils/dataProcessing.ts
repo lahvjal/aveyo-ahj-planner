@@ -78,64 +78,38 @@ const findCoordinatesInNestedStructure = (obj: any, depth: number = 0, maxDepth:
   return {};
 };
 
-export function extractCoordinates(rawPayload: any): { latitude?: number; longitude?: number; status?: string } {
+export function extractCoordinates(payload: any): { latitude?: number; longitude?: number; status?: string } {
   // If no payload, return empty result
-  if (!rawPayload) {
+  if (!payload) {
     return { status: 'no-payload' };
   }
-  
+  let rawpayload = payload.raw_payload
   try {
-    
-    // SIMPLIFIED APPROACH: Since we know coordinates are always in raw_payload.raw_payload.latitude/longitude
-    // Let's directly navigate to that structure
-    
-    // Check if payload has raw_payload
-    if (typeof rawPayload !== 'object' || !rawPayload.raw_payload) {
-      return { status: 'missing-first-level' };
-    }
-
-    // Get first level raw_payload
-    let firstLevelPayload = rawPayload.raw_payload;
-    
-    // If first level raw_payload is a string, try to parse it
-    if (typeof firstLevelPayload === 'string') {
-      try {
-        firstLevelPayload = JSON.parse(firstLevelPayload);
-      } catch (e) {
-        return { status: 'parse-error-first-level' };
+    // SIMPLIFIED APPROACH: Coordinates are now directly in raw_payload
+    console.log('PAYLOAD DEFAULT', payload)
+    // Ensure payload is an object
+    if (typeof rawpayload !== 'object') {
+      // If it's a string, try to parse it as JSON
+      if (typeof rawpayload === 'string') {
+        try {
+          rawpayload = JSON.parse(rawpayload);
+        } catch (e) {
+          return { status: 'parse-error' };
+        }
+      } else {
+        return { status: 'invalid-payload-type' };
       }
-    }
-    
-    // Check if first level payload has raw_payload
-    if (typeof firstLevelPayload !== 'object' || !firstLevelPayload.raw_payload) {
-      return { status: 'missing-second-level' };
-    }
-    
-    // Get second level raw_payload
-    let secondLevelPayload = firstLevelPayload.raw_payload;
-    
-    // If second level raw_payload is a string, try to parse it
-    if (typeof secondLevelPayload === 'string') {
-      try {
-        secondLevelPayload = JSON.parse(secondLevelPayload);
-      } catch (e) {
-        return { status: 'parse-error-second-level' };
-      }
-    }
-    
-    // Check if coordinates exist in second level raw_payload
-    if (typeof secondLevelPayload !== 'object') {
-      return { status: 'invalid-second-level' };
     }
     
     // Check for empty strings explicitly
-    if (secondLevelPayload.latitude === '' || secondLevelPayload.longitude === '') {
+    if (rawpayload.latitude === '' || rawpayload.longitude === '') {
       return { status: 'empty-string-coordinates' };
     }
     
     // Extract latitude and longitude
-    const lat = parseFloat(String(secondLevelPayload.latitude || ''));
-    const lng = parseFloat(String(secondLevelPayload.longitude || ''));
+    const lat = parseFloat(String(rawpayload.latitude || ''));
+    const lng = parseFloat(String(rawpayload.longitude || ''));
+    
     // Validate coordinates
     if (isNaN(lat) || isNaN(lng)) {
       return { status: 'invalid-coordinates' };
@@ -226,16 +200,26 @@ export const extractEntityName = (
   try {
     
     if (entityType === 'ahj') {
-      // AHJ names are stored in raw_payload.raw_payload.name
-      return (entity.raw_payload && 
-              typeof entity.raw_payload === 'object' && 
-              entity.raw_payload.raw_payload && 
-              typeof entity.raw_payload.raw_payload === 'object' ? 
-                entity.raw_payload.raw_payload.name : null) || 
-                entity.name || 
-                entity.ahj_name ||
-                entity.authority_having_jurisdiction ||
-                `Unknown AHJ`;
+      // Check for both single-nested and double-nested raw_payload structures
+      // First try the direct properties
+      const directName = entity.name || entity.ahj_name || entity.authority_having_jurisdiction;
+      if (directName) return directName;
+      
+      // Then check for single-nested raw_payload (new structure)
+      if (entity.raw_payload && typeof entity.raw_payload === 'object') {
+        // Try to get name directly from raw_payload
+        const singleNestedName = entity.raw_payload.name;
+        if (singleNestedName) return singleNestedName;
+        
+        // If that doesn't work, try the old double-nested structure
+        if (entity.raw_payload.raw_payload && typeof entity.raw_payload.raw_payload === 'object') {
+          const doubleNestedName = entity.raw_payload.raw_payload.name;
+          if (doubleNestedName) return doubleNestedName;
+        }
+      }
+      
+      // If all else fails, return Unknown AHJ
+      return `Unknown AHJ`;
     } else if (entityType === 'utility') {
       // Try multiple possible field names for utility name
       const name = entity.company_name || 
