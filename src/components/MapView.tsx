@@ -15,7 +15,7 @@ if (typeof window !== 'undefined') {
 }
 // Utility imports
 import { Project, ProjectFilter } from '@/utils/types';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { useData } from '@/contexts/DataContext';
 import { getClassificationMapColor, getClassificationBadgeClass } from '@/utils/classificationColors';
 import { getMapboxToken } from '@/utils/mapbox';

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/utils/supabaseClient';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');

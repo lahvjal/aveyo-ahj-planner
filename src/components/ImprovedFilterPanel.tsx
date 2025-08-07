@@ -5,7 +5,7 @@ import { ProjectFilter, ImprovedFilterPanelProps } from '@/utils/types';
 import CollapsibleFilterSection from './CollapsibleFilterSection';
 import ActiveFilterChip from './ActiveFilterChip';
 import { FiMap, FiList, FiSearch, FiLogOut, FiX, FiFilter, FiFileText } from 'react-icons/fi';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
 import ToggleOption from './ToggleOption';
 

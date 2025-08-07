@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/utils/supabaseClient';
 import { Project, ProjectFilter } from '@/utils/types';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { isQualified } from '@/utils/qualificationStatus';
 
 export function useProjects(initialFilters: ProjectFilter[] = []) {

@@ -9,54 +9,87 @@
 import { getFilteredData } from '@/server/ServerDataService';
 import { parseFilters } from '@/utils/parseFilters';
 import ClientHomePage from '@/client-pages/ClientHomePage';
-import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { ProjectFilter } from '@/utils/types';
+import { createClient } from '@/utils/supabase/server';
 
 export default async function ServerPage({ searchParams }: { searchParams: any }) {
-  // Get user session from cookies for access control
-  const cookieStore = cookies();
-  const supabase = createServerComponentClient({ cookies: () => cookieStore });
+  console.log('[ServerPage] Rendering server page');
   
-  // Get user session
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  // Get user profile if session exists
+  // Initialize variables to track state
+  let session = null;
   let userProfile = null;
-  if (session?.user?.id) {
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .single();
-    
-    if (profileData) {
-      userProfile = {
-        ...profileData,
-        isAdmin: profileData.role === 'admin'
-      };
-    }
-  }
-  
-  // Parse filters from URL parameters
-  const filters = await parseFilters(searchParams);
+  let filters: ProjectFilter[] = [];
+  let error = null;
   
   try {
+    // Get user session using our server-side Supabase client
+    const supabase = createClient();
+    
+    console.log('[ServerPage] Getting user session');
+    // Get user session
+    const sessionResponse = await supabase.auth.getSession();
+    session = sessionResponse.data.session;
+    
+    // Get user profile if session exists
+    if (session?.user?.id) {
+      console.log('[ServerPage] User authenticated, fetching profile');
+      
+      // Try to get profile from profiles table
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      
+      if (profileError) {
+        console.warn('[ServerPage] Error fetching from profiles table:', profileError.message);
+        
+        // Try to get profile from users table as fallback
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (userError) {
+          console.error('[ServerPage] Error fetching user profile:', userError.message);
+        } else if (userData) {
+          userProfile = {
+            ...userData,
+            isAdmin: userData.role === 'admin'
+          };
+          console.log('[ServerPage] User profile fetched from users table');
+        }
+      } else if (profileData) {
+        userProfile = {
+          ...profileData,
+          isAdmin: profileData.role === 'admin'
+        };
+        console.log('[ServerPage] User profile fetched from profiles table');
+      }
+    } else {
+      console.log('[ServerPage] No authenticated user');
+    }
+    
+    // Parse filters from URL parameters
+    filters = await parseFilters(searchParams);
+    console.log('[ServerPage] Parsed filters:', filters.length);
+    
     // Fetch filtered data based on URL parameters
     const data = await getFilteredData(filters, userProfile);
+    console.log('[ServerPage] Data fetched successfully');
     
     // Create a serializable version of the data
-    // This is necessary because the data might contain circular references
     const serializedData = {
-      projects: data.projects,
-      ahjs: data.ahjs,
-      utilities: data.utilities,
-      financiers: data.financiers,
+      projects: data.projects || [],
+      ahjs: data.ahjs || [],
+      utilities: data.utilities || [],
+      financiers: data.financiers || [],
       filters,
       userProfile
     };
     
     // Embed the data in a hidden div for client-side hydration
-    // This will be picked up by the client component
     return (
       <>
         <script
@@ -70,7 +103,7 @@ export default async function ServerPage({ searchParams }: { searchParams: any }
       </>
     );
   } catch (error) {
-    console.error('Error in ServerPage:', error);
+    console.error('[ServerPage] Error:', error);
     
     // Return the ClientHomePage with error state
     return (
@@ -80,7 +113,7 @@ export default async function ServerPage({ searchParams }: { searchParams: any }
           ahjs: [],
           utilities: [],
           financiers: [],
-          filters: [],
+          filters: filters || [],
           error: 'Failed to load data from server',
           userProfile
         }} 

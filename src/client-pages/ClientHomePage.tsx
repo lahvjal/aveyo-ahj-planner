@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { FiList, FiMap } from 'react-icons/fi';
 
 import { Project, ProjectFilter } from '@/utils/types';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { useData } from '@/contexts/DataContext';
 import { filtersToUrlParams } from '@/utils/parseFilters';
 import { useMediaQuery } from '@/hooks';
@@ -51,30 +51,59 @@ export default function ClientHomePage({ serverData }: ClientHomePageProps) {
   
   // Redirect to login if not authenticated
   useEffect(() => {
+    console.log('[ClientHomePage] Auth state:', { authLoading, user: !!user, userProfile: !!userProfile });
+    
+    // Only redirect if we're not loading and there's no user
     if (!authLoading && !user) {
+      console.log('[ClientHomePage] Not authenticated, redirecting to login');
       router.push('/login');
     }
-  }, [user, authLoading, router]);
+  }, [user, userProfile, authLoading, router]);
   
   // Hydrate DataContext with server data if available
   useEffect(() => {
-    if (serverData && dataContext && !hydrationComplete.current) {
+    if (!dataContext) {
+      console.warn('[ClientHomePage] DataContext not available yet');
+      return;
+    }
+    
+    if (hydrationComplete.current) {
+      console.log('[ClientHomePage] Hydration already completed');
+      return;
+    }
+    
+    console.log('[ClientHomePage] Attempting data hydration', { 
+      hasServerData: !!serverData,
+      hasDataContext: !!dataContext
+    });
+    
+    if (serverData) {
+      console.log('[ClientHomePage] Hydrating from server data');
       // Hydrate the DataContext with server data
       dataContext.hydrateFromServer(serverData);
       hydrationComplete.current = true;
-    } else if (!serverData && !hydrationComplete.current) {
+    } else {
       // If no server data is available, try to extract it from the DOM
       try {
+        console.log('[ClientHomePage] No server data prop, checking DOM');
         const serverDataElement = document.getElementById('server-data');
+        
         if (serverDataElement && serverDataElement.textContent) {
+          console.log('[ClientHomePage] Found data in DOM, hydrating');
           const extractedData = JSON.parse(serverDataElement.textContent);
-          dataContext?.hydrateFromServer(extractedData);
+          dataContext.hydrateFromServer(extractedData);
+          hydrationComplete.current = true;
+        } else {
+          console.log('[ClientHomePage] No data in DOM, falling back to client fetch');
+          // Fall back to client-side fetching
+          dataContext.fetchAllData();
           hydrationComplete.current = true;
         }
       } catch (error) {
-        console.error('Error hydrating from DOM:', error);
+        console.error('[ClientHomePage] Error hydrating from DOM:', error);
         // Fall back to client-side fetching
-        dataContext?.fetchAllData();
+        console.log('[ClientHomePage] Error occurred, falling back to client fetch');
+        dataContext.fetchAllData();
         hydrationComplete.current = true;
       }
     }

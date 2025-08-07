@@ -8,7 +8,7 @@ import ProjectListView from '@/components/ProjectListView';
 import ImprovedFilterPanel from '@/components/ImprovedFilterPanel';
 import { useProjects } from '@/hooks/useProjects';
 import { Project, ProjectFilter } from '@/utils/types';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { FiMap, FiList } from 'react-icons/fi';
 import { mapQualificationStatus } from '@/utils/qualificationStatus';
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { FiLogOut } from 'react-icons/fi';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 
 interface MobileHeaderProps {
   title?: string;

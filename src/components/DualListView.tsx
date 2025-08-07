@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Project, ProjectFilter } from '@/utils/types';
 import ProjectListView from './ProjectListView';
 import EntityListView from './EntityListView';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 
 interface DualListViewProps {
   projects: Project[];

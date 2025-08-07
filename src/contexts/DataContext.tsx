@@ -247,11 +247,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
   
-  // Initialize user location
+  // Initialize user location and fetch data
   useEffect(() => {
     // Get user location when the context is initialized
     getUserLocation();
-  }, [getUserLocation]);
+    
+    // Fetch initial data
+    fetchAllData();
+    
+    console.log('[DataContext] Initial data fetch triggered');
+    
+    // Safety timeout to prevent infinite loading state
+    const safetyTimeout = setTimeout(() => {
+      setRawData(prev => {
+        if (prev.isLoading) {
+          console.warn('[DataContext] Safety timeout triggered - forcing loading state to false');
+          return { ...prev, isLoading: false, error: 'Data fetch timeout exceeded' };
+        }
+        return prev;
+      });
+    }, 10000); // 10 seconds timeout
+    
+    return () => clearTimeout(safetyTimeout);
+  }, [getUserLocation, fetchAllData]);
 
   // Add a filter
   const addFilter = useCallback((filter: ProjectFilter) => {

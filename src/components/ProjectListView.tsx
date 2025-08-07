@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { FiMapPin } from 'react-icons/fi';
 import { Project } from '@/utils/types';
 import { useData } from '@/contexts/DataContext';
-import { useAuth } from '@/utils/AuthContext';
+import { useAuth } from '@/providers/AuthProvider';
 import { getClassificationBadgeClass, formatClassification } from '@/utils/classificationColors';
 import { isQualified } from '@/utils/qualificationStatus';
 import EmptyState from './EmptyState';

@@ -5,21 +5,16 @@
  * This service is designed to be used in server components and API routes.
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { 
   extractCoordinates, 
   extractEntityName, 
   extractClassification 
 } from '@/utils/dataProcessing';
 import { Project, ProjectFilter } from '@/utils/types';
-
-// Initialize Supabase client with server-side credentials
-// Using environment variables for security
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+import { createClient } from '@/utils/supabase/server';
 
 // Create a single instance of the Supabase client for server-side use
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient();
 
 // Define types for processed data
 export interface ProcessedData {
