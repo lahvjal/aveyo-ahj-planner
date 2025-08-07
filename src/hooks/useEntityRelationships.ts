@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Project } from '@/utils/types';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 
 /**
  * Custom hook to track relationships between AHJs and Utilities based on projects

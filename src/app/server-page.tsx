@@ -6,6 +6,9 @@
  * data fetching and processing.
  */
 
+// Force dynamic rendering since we use cookies for authentication
+export const dynamic = 'force-dynamic';
+
 import { getFilteredData } from '@/server/ServerDataService';
 import { parseFilters } from '@/utils/parseFilters';
 import ClientHomePage from '@/client-pages/ClientHomePage';
@@ -23,7 +26,7 @@ export default async function ServerPage({ searchParams }: { searchParams: any }
   
   try {
     // Get user session using our server-side Supabase client
-    const supabase = createClient();
+    const supabase = await createClient();
     
     console.log('[ServerPage] Getting user session');
     // Get user session

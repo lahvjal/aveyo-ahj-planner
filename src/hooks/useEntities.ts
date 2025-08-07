@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 import { extractCoordinates, extractEntityName, extractClassification } from '@/utils/dataProcessing';
 
 // Define types for entity data

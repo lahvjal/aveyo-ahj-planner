@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 import { useAuth } from '@/providers/AuthProvider';
 
 export default function RegisterPage() {

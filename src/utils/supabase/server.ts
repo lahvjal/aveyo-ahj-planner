@@ -5,24 +5,37 @@
  * It uses cookies() from next/headers, so it should only be imported in server components.
  */
 
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { supabaseUrl, supabaseAnonKey } from './config';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 
 /**
  * Create a Supabase client for server components with proper cookie handling
  * @returns Supabase client
  */
-export function createClient() {
-  try {
-    return createServerComponentClient({
-      cookies,
-    });
-  } catch (error) {
-    console.error('[Supabase Server] Error creating server client:', error);
-    
-    // Fallback to basic client if server component client fails
-    return createSupabaseClient(supabaseUrl, supabaseAnonKey);
-  }
+export async function createClient() {
+  const cookieStore = await cookies();
+  
+  return createServerClient(
+    supabaseUrl,
+    supabaseAnonKey,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch (error) {
+            // The `setAll` method was called from a Server Component.
+            // This can be ignored if you have middleware refreshing
+            // user sessions.
+          }
+        },
+      },
+    }
+  );
 }

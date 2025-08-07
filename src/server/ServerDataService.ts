@@ -13,8 +13,7 @@ import {
 import { Project, ProjectFilter } from '@/utils/types';
 import { createClient } from '@/utils/supabase/server';
 
-// Create a single instance of the Supabase client for server-side use
-const supabase = createClient();
+// Note: createClient is async, so we create it per function call
 
 // Define types for processed data
 export interface ProcessedData {
@@ -44,6 +43,9 @@ export interface FilterParams {
  */
 export async function fetchAllData(): Promise<ProcessedData> {
   try {
+    // Create supabase client for this function
+    const supabase = await createClient();
+    
     // Fetch all data in parallel for efficiency
     const [projectsResult, ahjResult, utilityResult, financierResult] = await Promise.all([
       supabase.from('podio_data').select('*'),
@@ -754,5 +756,4 @@ export function parseFiltersFromUrl(searchParams: any) {
   return filters;
 }
 
-// Export the Supabase client for use in other server components
-export { supabase };
+// Note: Supabase clients are now created per function call due to async nature

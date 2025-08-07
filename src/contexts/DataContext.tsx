@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 import { Project, ProjectFilter } from '@/utils/types';
 import { extractCoordinates, extractEntityName, extractClassification } from '@/utils/dataProcessing';
 

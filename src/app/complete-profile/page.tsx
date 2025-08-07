@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/providers/AuthProvider';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 
 export default function CompleteProfilePage() {
   const [salesRepId, setSalesRepId] = useState('');

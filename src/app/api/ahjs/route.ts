@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '@/utils/supabase';
 
 // These are required for static export with API routes
 export const dynamic = 'force-static';
