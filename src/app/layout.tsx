@@ -15,8 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "45 Day Program - AHJ Knock Planner",
-  description: "Map-based tool for solar sales reps to identify qualified knocking zones",
+  title: "myaveyo",
+  description: "Tool for browsing AHJs and Utility companies. View your projects",
+  icons: {
+    icon: '/favicon.ico?v=2',
+    shortcut: '/favicon.ico?v=2',
+    apple: '/favicon.ico?v=2',
+  },
 };
 
 export default function RootLayout({
