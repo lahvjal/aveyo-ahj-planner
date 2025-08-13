@@ -140,7 +140,6 @@ const DualListView: React.FC<DualListViewProps> = ({
       {/* Active view */}
       {activeView === 'list' ? (
         <ProjectListView
-          projects={myProjects}
           onViewOnMap={onViewOnMap}
           selectedProject={selectedProject}
           onSelectProject={onSelectProject}

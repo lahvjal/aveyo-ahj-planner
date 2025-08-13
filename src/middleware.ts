@@ -1,11 +1,35 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { updateSession } from '@/utils/supabase/middleware';
+import { isMaintenanceModeEnabled, shouldBypassMaintenance, getClientIP } from '@/utils/maintenance';
 
 // This middleware ensures authentication is required for protected routes
 export async function middleware(request: NextRequest) {
   try {
     console.log(`[Middleware] Processing request for path: ${request.nextUrl.pathname}`);
+    
+    // Check for maintenance mode first (before any other processing)
+    if (isMaintenanceModeEnabled()) {
+      const path = request.nextUrl.pathname;
+      const clientIP = getClientIP(request);
+      
+      // Allow access to the maintenance page itself
+      if (path === '/maintenance') {
+        console.log('[Middleware] Allowing access to maintenance page');
+        return NextResponse.next();
+      }
+      
+      // Check if this IP should bypass maintenance mode
+      if (shouldBypassMaintenance(clientIP)) {
+        console.log(`[Middleware] IP ${clientIP} bypassing maintenance mode`);
+        return NextResponse.next();
+      }
+      
+      // Redirect all other requests to maintenance page
+      console.log(`[Middleware] Maintenance mode active, redirecting ${path} to /maintenance`);
+      const maintenanceUrl = new URL('/maintenance', request.url);
+      return NextResponse.redirect(maintenanceUrl);
+    }
     
     // Log cookies for debugging
     const allCookies = request.cookies.getAll();

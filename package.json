@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "next lint",
     "export": "next export",
-    "netlify-build": "npm install && next build"
+    "netlify-build": "npm install && next build",
+    "maintenance:on": "node scripts/toggle-maintenance.js on",
+    "maintenance:off": "node scripts/toggle-maintenance.js off",
+    "maintenance:status": "node scripts/toggle-maintenance.js status"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-geocoder": "^5.0.3",
